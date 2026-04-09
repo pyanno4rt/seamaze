@@ -1,4 +1,3 @@
-[![CI/CD](https://github.com/pyanno4rt/seamaze/actions/workflows/ci-cd.yml/badge.svg?branch=master)](https://github.com/pyanno4rt/seamaze/actions/workflows/ci-cd.yml)
 [![PyPI](https://img.shields.io/badge/PyPI-seamaze-orange.svg)](https://pypi.org/project/seamaze/)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/seamaze)
 [![Coverage Status](https://coveralls.io/repos/github/pyanno4rt/seamaze/badge.svg)](https://coveralls.io/github/pyanno4rt/seamaze)
@@ -10,7 +9,7 @@
 [![GitHub Discussions](https://img.shields.io/github/discussions/pyanno4rt/seamaze)](https://github.com/pyanno4rt/seamaze/discussions)
 [![GitHub Issues](https://img.shields.io/github/issues/pyanno4rt/seamaze)](https://github.com/pyanno4rt/seamaze/issues)
 [![GitHub Contributors](https://img.shields.io/github/contributors/pyanno4rt/seamaze)](https://github.com/pyanno4rt/seamaze/graphs/contributors)
-[![License: MIT](https://shields.io)](https://opensource.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 <p align="center">
 <picture>
@@ -53,24 +52,28 @@ git clone https://github.com/pyanno4rt/seamaze.git
 ###### Classical CMA-ES
 
 ```python
-from seamaze import CMAES
+from seamaze.cmaes import CMAES
 ```
 
 ###### Dynamical low-rank CMA-ES
 
 ```python
-from seamaze import DLRCMAES
+from seamaze.dlrcmaes import DLRCMAES
 ```
 
 ### Dependencies
 
 | Name                           | Version                               |
 | -----------------------------: | :------------------------------------ |
-| `python`                       | <font size="3"> >=3.9 </font>         |
+| `python`                       | <font size="3"> >=3.11, <4.0 </font>  |
 | `numpy`                        | <font size="3"> >=2.4.4 </font>       |
-| `scipy`                        | <font size="3"> >=1.9.0 </font>
+| `scipy`                        | <font size="3"> >=1.17.1 </font>      |
 | `numba`                        | <font size="3"> >=0.65.0 </font>      |
 | `matplotlib`                   | <font size="3"> >=3.10.8 </font>      |
+| `seaborn`                      | <font size="3"> >=0.13.2 </font>      |
+| `pyqt5-qt5`                    | <font size="3"> ==5.15.2 </font>      |
+| `pyqt5`                        | <font size="3"> ==5.15.10 </font>     |
+| `setuptools`                   | <font size="3"> <81.0.0 </font>       |
 
 Moreover, we are using **Python v3.11.11** and **Spyder IDE v6.1.4** for development.
 
