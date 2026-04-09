@@ -71,6 +71,9 @@ from seamaze.dlrcmaes import DLRCMAES
 | `numba`                        | <font size="3"> >=0.65.0 </font>      |
 | `matplotlib`                   | <font size="3"> >=3.10.8 </font>      |
 | `seaborn`                      | <font size="3"> >=0.13.2 </font>      |
+| `pyqt5-qt5`                    | <font size="3"> ==5.15.2 </font>      |
+| `pyqt5`                        | <font size="3"> ==5.15.10 </font>     |
+| `setuptools`                   | <font size="3"> <81.0.0 </font>       |
 
 Moreover, we are using **Python v3.11.11** and **Spyder IDE v6.1.4** for development.
 
