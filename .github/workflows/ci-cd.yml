@@ -1,0 +1,48 @@
+# seamaze CI/CD workflow
+
+name: CI/CD
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test-and-coverage:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
+
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v3
+        with:
+          poetry-version: 1.5.1
+
+      - name: Install dependencies
+        run: poetry install
+
+      - name: Run tests with coverage
+        run: poetry run pytest --cov=seamaze --cov-report=lcov
+
+      - name: Upload coverage to Coveralls
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path-to-lcov: coverage.lcov
+
