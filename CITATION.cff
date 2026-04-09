@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+title: "seamaze: a python library for classical and dynamical low-rank CMA-ES"
+message: "If you use seamaze in your work, let us now and cite this repository as below."
+version: 0.0.1
+type: software
+authors:
+  - given-names: "Tim"
+    family-names: "Ortkamp"
+    orcid: "https://orcid.org/0009-0005-6603-3088"
+  - given-names: "Chinmay"
+    family-names: "Patwardhan"
+    orcid: "https://orcid.org/0000-0002-6809-642X"
+  - given-names: "Pia"
+    family-names: "Stammer"
+    orcid: "https://orcid.org/0000-0002-5595-0439"
+abstract: "seamaze is a Python library for classical and Dynamical Low-Rank (DLR) CMA-ES variants. It is designed to navigate complex, high-dimensional fitness landscapes by iteratively adapting a multivariate Gaussian search space to the objective's local topography. By leveraging DLR approximations, seamaze remains computationally efficient even on ill-conditioned or rugged black-box problems. This implementation further extends to the integration of first-order information, constraints, and robust restart mechanisms."
+keywords:
+  - python
+  - optimization
+  - black-box-optimization
+  - evolution-strategies
+  - cma-es
+  - dynamical-low-rank
+license: MIT
+date-released: 2026-04-09
+repository-code: "http://github.com/pyanno4rt/seamaze"
+url: "http://github.com/pyanno4rt/seamaze"
