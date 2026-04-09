@@ -65,11 +65,12 @@ from seamaze.dlrcmaes import DLRCMAES
 
 | Name                           | Version                               |
 | -----------------------------: | :------------------------------------ |
-| `python`                       | <font size="3"> >=3.9 </font>         |
+| `python`                       | <font size="3"> >=3.11, <4.0 </font>  |
 | `numpy`                        | <font size="3"> >=2.4.4 </font>       |
-| `scipy`                        | <font size="3"> >=1.9.0 </font>
+| `scipy`                        | <font size="3"> >=1.17.1 </font>      |
 | `numba`                        | <font size="3"> >=0.65.0 </font>      |
 | `matplotlib`                   | <font size="3"> >=3.10.8 </font>      |
+| `seaborn`                      | <font size="3"> >=0.13.2 </font>      |
 
 Moreover, we are using **Python v3.11.11** and **Spyder IDE v6.1.4** for development.
 
