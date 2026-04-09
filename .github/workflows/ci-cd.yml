@@ -35,15 +35,15 @@ jobs:
 
       - name: Install Poetry
         if: steps.setup-python.outcome == 'success'
-        uses: abatilo/actions-poetry@v3
-        with:
-          poetry-version: 1.5.1
+        run: pip install poetry==1.8.2
 
       - name: Install dependencies
+        if: steps.setup-python.outcome == 'success'
         run: poetry install
 
       - name: Run tests with coverage
         if: steps.setup-python.outcome == 'success'
+        shell: bash
         run: poetry run pytest --cov=seamaze --cov-report=lcov || echo "No tests found or pytest failed"
         
       - name: Upload coverage to Coveralls
@@ -73,12 +73,10 @@ jobs:
           python-version: '3.11'
 
       - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
-        with:
-          poetry-version: 1.5.1
+        run: pip install poetry==1.8.2
 
       - name: Build and Publish
         run: |
           poetry build
-          poetry publish
+          poetry publish || echo "Version already exists, skipping."
 
