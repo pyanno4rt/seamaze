@@ -40,12 +40,7 @@ jobs:
           poetry-version: 1.5.1
 
       - name: Install dependencies
-        run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            poetry lock --no-update
-          fi
-          poetry install
-        shell: bash
+        run: poetry install
 
       - name: Run tests with coverage
         if: steps.setup-python.outcome == 'success'
