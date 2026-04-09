@@ -30,6 +30,7 @@ jobs:
         continue-on-error: true
         with:
           python-version: ${{ matrix.python-version }}
+          architecture: x64
           cache: 'pip'
 
       - name: Install Poetry

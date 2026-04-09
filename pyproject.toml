@@ -32,12 +32,14 @@ scipy = ">=1.17.1"
 numba = ">=0.65.0"
 matplotlib = ">=3.10.8"
 seaborn = ">=0.13.2"
-pyqt5-qt5 = "^5.15"
-pyqt5 = "^5.15"
+PyQt5 = [
+    { version = "^5.15.10", platform = "win32" },
+    { version = "^5.15.2", platform = "linux" },
+    { version = "^5.15.2", platform = "darwin" }
+]
 setuptools = "<81.0.0"
 
 [tool.poetry.group.dev.dependencies]
-pyqtwebengine-qt5 = "^5.15"
 ipython = ">=9.10.1"
 spyder = ">=6.1.4"
 spyder-kernels = ">=3.1.4"
