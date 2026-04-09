@@ -57,7 +57,7 @@ jobs:
   deploy:
     name: Build and Publish to PyPI
     needs: test-and-coverage
-    if: (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')) && github.event_name == 'push'
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -78,5 +78,5 @@ jobs:
       - name: Build and Publish
         run: |
           poetry build
-          poetry publish || echo "Version already exists, skipping."
+          poetry publish --non-interactive || echo "Version already exists, skipping."
 
