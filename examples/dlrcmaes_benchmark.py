@@ -28,7 +28,7 @@ solver_rastrigin = DLRCMAES(
     upper_variable_bounds=array(rastrigin.bounds[1]),
     number_of_individuals=100,
     initial_sigma=2.0,
-    low_rank_integrator='fixedsymmetricBUG',
+    low_rank_integrator='fixedSPDBUG',
     low_rank_dimension=None,
     low_rank_tolerance_rel=1e-2,
     low_rank_tolerance_abs=1e-8,
@@ -49,7 +49,7 @@ solver_sphere = DLRCMAES(
     upper_variable_bounds=array(sphere.bounds[1]),
     number_of_individuals=100,
     initial_sigma=2.0,
-    low_rank_integrator='fixedsymmetricBUG',
+    low_rank_integrator='fixedSPDBUG',
     low_rank_dimension=None,
     low_rank_tolerance_rel=1e-2,
     low_rank_tolerance_abs=1e-8,
@@ -70,7 +70,7 @@ solver_stybtang = DLRCMAES(
     upper_variable_bounds=array(stybtang.bounds[1]),
     number_of_individuals=100,
     initial_sigma=2.0,
-    low_rank_integrator='fixedsymmetricBUG',
+    low_rank_integrator='fixedSPDBUG',
     low_rank_dimension=None,
     low_rank_tolerance_rel=1e-2,
     low_rank_tolerance_abs=1e-8,
@@ -89,3 +89,5 @@ result_sphere = solver_sphere.optimize(array([5]*sphere._n))
 result_stybtang = solver_stybtang.optimize(array([5]*stybtang._n))
 
 # Plot ...
+
+# %%
