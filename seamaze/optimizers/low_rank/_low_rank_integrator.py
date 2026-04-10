@@ -459,7 +459,7 @@ class LowRankIntegrator:
 
         self._K -= s * U
 
-        s += dt * d_s
+        self._s += dt * d_s
 
         #
         K_updated = self.K_step(self._K, U, dt)
@@ -626,66 +626,71 @@ class LowRankIntegrator:
 
         return self.truncate(Uhat_aug, Shat, Uhat_aug)
 
-    # def SPDaugBUG_step(
-    #     self,
-    #     U,
-    #     S,
-    #     V,
-    #     psi,
-    #     dt):
-    #     """
-    #     Perform a single step of the low-rank plus diagonal augmented BUG integrator.
-    #     Parameters
-    #     ----------
-    #     ...
-    #     Returns
-    #     -------
-    #     ...
-    #     """
+    def SPDaugBUG_step(
+        self,
+        U,
+        S,
+        V,
+        psi,
+        dt):
+        """
+        Perform a single step of the low-rank plus diagonal augmented BUG integrator.
+        Parameters
+        ----------
+        ...
+        Returns
+        -------
+        ...
+        """
 
-    #     #
-    #     rank = U.shape[1]
-    #     max_rank = 2*rank
+        #
+        rank = U.shape[1]
+        max_rank = 2*rank
 
-    #     #
-    #     K_slice = self._K[:, :rank]
-    #     K_aug = self._K[:, :max_rank]
-    #     Uhat_aug = self._Uhat[:, :max_rank]
+        #
+        K_slice = self._K[:, :rank]
+        K_aug = self._K[:, :max_rank]
+        Uhat_aug = self._Uhat[:, :max_rank]
+        Id = identity(U.shape[0])
 
-    #     #
-    #     matmul(U, S, out=K_slice)
+        #
+        matmul(U, S, out=K_slice)
 
-    #     U_proj = I - U @ U.T
-    #     U_proj_had = U_proj * U_proj
-    #     U_proj_had_pinv = np.linalg.pinv(U_proj_had)
+        U_proj = Id - U @ U.T
+        U_proj_had = U_proj * U_proj
+        U_proj_had_pinv = pinv(U_proj_had)
+        
+        Y = self._K @ U.T
+        F = self.K_step(Y, Id, dt)
+        F -= self._K
 
-    #     d_psi = U_proj_had_pinv @ diag(U_proj @ U_proj) # Add F here
+        d_psi = U_proj_had_pinv @ diag(U_proj @ F @ U_proj) # Add F here
 
-    #     psi = diag(psi + dt * d_psi)
-    #     #
-    #     self.K_step(K_slice, V, dt)
-    #     K_slice -= dt * (d_psi @ U)
-    #     copyto(self._K[:, rank:max_rank], U)
+        self._psi = diag(psi + dt * d_psi)
+        #
+        self.K_step(K_slice, V, dt)
+        K_slice -= dt * (d_psi @ U)
+        copyto(self._K[:, rank:max_rank], U)
 
-    #     #
-    #     Uhat, _ = qr(K_aug, mode='economic', check_finite=False) # K_aug is initialized at the beginning but never updated
-    #     copyto(self._Uhat[:, :Uhat.shape[1]], Uhat)
+        #
+        Uhat, _ = qr(K_aug, mode='economic', check_finite=False) # K_aug is initialized at the beginning but never updated
+        copyto(self._Uhat[:, :Uhat.shape[1]], Uhat)
 
-    #     #
-    #     M_proj = self._M[:max_rank, :rank]
-    #     matmul(Uhat_aug.T, U, out=M_proj)
+        #
+        M_proj = self._M[:max_rank, :rank]
+        matmul(Uhat_aug.T, U, out=M_proj)
 
-    #     #
-    #     ext_S = M_proj @ S @ M_proj.T
-    #     Shat = self.S_step(
-    #         Uhat_aug, ext_S, Uhat_aug, Uhat_aug, ext_S, Uhat_aug, dt)
+        #
+        ext_S = M_proj @ S @ M_proj.T
+        Shat = self.S_step(
+            Uhat_aug, ext_S, Uhat_aug, Uhat_aug, ext_S, Uhat_aug, dt)
 
-    #     #
-    #     Shat -= dt * (Uhat_aug.T @ d_psi @ Uhat_aug)
-    #     Shat += Shat.T
-    #     Shat *= 0.5
+        #
+        Shat -= dt * (Uhat_aug.T @ d_psi @ Uhat_aug)
+        Shat += Shat.T
+        Shat *= 0.5
 
-    #     return self.truncate(Uhat_aug, Shat, Uhat_aug)
+        return self.truncate(Uhat_aug, Shat, Uhat_aug)
 
     # def isoSPDaugBUG_step(
     #     self,
