@@ -333,7 +333,7 @@ class LowRankIntegrator:
         self.K_step(K_slice, V, dt)
 
         #
-        if aug_size > 0 && augmentation == 'random':
+        if aug_size > 0 and augmentation == 'random':
 
             #
             copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
@@ -346,7 +346,7 @@ class LowRankIntegrator:
         self.L_step(L_slice, U, dt)
 
         #
-        if aug_size > 0 && augmentation == 'random':
+        if aug_size > 0 and augmentation == 'random':
 
             #
             copyto(self._L[:, rank:max_rank], np.random.rand(m, aug_size))
@@ -549,7 +549,7 @@ class LowRankIntegrator:
         self.K_step(K_slice, V, dt)
 
         #
-        if aug_size > 0 && augmentation == 'random':
+        if aug_size > 0 and augmentation == 'random':
 
             #
             copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
@@ -562,7 +562,7 @@ class LowRankIntegrator:
         self.L_step(L_slice, U, dt)
 
         #
-        if aug_size > 0 && augmentation == 'random':
+        if aug_size > 0 and augmentation == 'random':
 
             #
             copyto(self._L[:, rank:max_rank], np.random.rand(m, aug_size))
@@ -633,7 +633,7 @@ class LowRankIntegrator:
         self.K_step(K_slice, U, dt)
 
         #
-        if aug_size > 0 && augmentation == 'random':
+        if aug_size > 0 and augmentation == 'random':
 
             #
             copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
