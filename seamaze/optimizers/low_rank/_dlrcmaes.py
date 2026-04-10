@@ -13,9 +13,9 @@ from collections import deque
 from math import inf
 from numba import njit
 from numpy import (
-    add, arange, argmin, argsort, array, clip, copyto, empty, exp, eye,
-    fill_diagonal, float64, full, log, matmul, maximum, median, multiply, ones,
-    sqrt, take, zeros)
+    add, arange, argmin, argsort, array, ascontiguousarray, clip, copyto,
+    empty, exp, eye, fill_diagonal, float64, full, log, matmul, maximum,
+    median, multiply, ones, sqrt, take, zeros)
 from numpy import sum as nsum
 from numpy.random import default_rng
 from scipy.linalg import eigh
@@ -150,7 +150,7 @@ class DLRCMAES:
 
         # Determine the integrator rank
         rank = min(
-            low_rank_dimension or number_of_variables // 10,
+            max(1, low_rank_dimension or number_of_variables // 10),
             number_of_variables)
 
         # Initialize the dynamical low-rank integrator
@@ -646,7 +646,7 @@ class DLRCMAES:
         if initial_mean is not None:
 
             # Set the initial mean
-            self._mean = initial_mean
+            self._mean = initial_mean.astype(float)
 
         # Continue until termination criteria are fulfilled
         while self.check_termination() is False:
@@ -715,7 +715,8 @@ class DLRCMAES:
         if len(self._fitness_history) > 0:
 
             # Check if the optimal value is below a threshold
-            if self._fitness_history[-1] < self.fitness_threshold:
+            if (self.fitness_threshold is not None
+                    and self._fitness_history[-1] < self.fitness_threshold):
 
                 # Add the solver info
                 self._result['solver_info'] = 'FITNESS_BELOW_THRESH'
@@ -775,7 +776,8 @@ def _tell(
     inv_root_ev = 1.0 / (sqrt(ev) + 1e-15)
 
     # Transform the elite mean step
-    latent_mean_step = left_basis.T @ elite_mean_step
+    latent_basis_t = ascontiguousarray(left_basis.T)
+    latent_mean_step = latent_basis_t @ elite_mean_step
     eq_step = eq.T @ latent_mean_step
     latent_step_whitened = eq @ (inv_root_ev * eq_step)
 

@@ -7,8 +7,9 @@
 from numpy import (
     clip, copyto, diag, eye, float64, matmul, maximum, zeros)
 from numpy import sum as nsum
-from numpy.linalg import pinv, svd
+from numpy.linalg import pinv, svd, trace
 from scipy.linalg import qr
+from scipy.sparse import identity
 
 # %% Dynamical low-rank integrator class
 
@@ -93,6 +94,7 @@ class LowRankIntegrator:
         self._M = None
         self._N = None
         self._psi = None
+        self._s = None
 
         # Initialize the capacity
         self._capacity = None
@@ -153,6 +155,9 @@ class LowRankIntegrator:
         # Initialize psi
         self._psi = zeros(
             (number_of_variables, number_of_variables), dtype=float64)
+        
+        # Initialize s
+        self._s = 0.0
 
     def update(
             self,
@@ -398,15 +403,20 @@ class LowRankIntegrator:
         L_aug = self._L[:, :max_rank]
         Uhat_aug = self._Uhat[:, :max_rank]
         Vhat_aug = self._Vhat[:, :max_rank]
-
+        Id = identity(U.shape[0])
         #
         matmul(U, S, out=self._K)
 
-        U_proj = eye() - U @ U.T
+        U_proj = Id - U @ U.T
         U_proj_had = U_proj * U_proj
         U_proj_had_pinv = pinv(U_proj_had)
-
-        d_psi = U_proj_had_pinv @ diag(U_proj @ U_proj) # Add F here
+        
+        
+        Y = self._K @ U.T
+        F = self.K_step(Y, Id, dt)
+        F -= self._K
+        
+        d_psi = U_proj_had_pinv @ diag(U_proj @ F @ U_proj) # Add F here
 
         #
         self._psi += dt * d_psi
@@ -435,58 +445,64 @@ class LowRankIntegrator:
 
         return self._Uhat, Shat, self._Uhat
 
-    # def isofixedSPDBUG_step(
-    #         self,
-    #         U,
-    #         S,
-    #         _,
-    #         s,
-    #         dt):
-    #     """
-    #     Perform a single step of the fixed-rank SPD BUG integrator.
-    #     Parameters
-    #     ----------
-    #     ...
-    #     Returns
-    #     -------
-    #     ...
-    #     """
+    def isofixedSPDBUG_step(
+            self,
+            U,
+            S,
+            _,
+            s,
+            dt):
+        """
+        Perform a single step of the fixed-rank SPD BUG integrator.
+        Parameters
+        ----------
+        ...
+        Returns
+        -------
+        ...
+        """
 
-    #     #
+        #
 
-    #     d,rank = shape(U)
-    #     # Evaluate F from the RHS
-    #     d_s = (np.linalg.trace(F) - np.linalg.trace(U.T @ F @ U)) / (d - rank)
+        d,rank = U.shape
+        Id = identity(d)
+        
+        # Evaluate F from the RHS
+        Y = self._K @ U.T
+        F = self.K_step(Y, Id, dt)
+        F -= self._K
+        
+        d_s = (trace(F) - trace(U.T @ F @ U)) / (d - rank)
 
-    #     matmul(U, S, out=self._K)
+        matmul(U, S, out=self._K)
 
-    #     self._K -= s * U
+        self._K -= s * U
 
-    #     s += dt * d_s
+        self._s += dt * d_s
 
-    #     #
-    #     K_updated = self.K_step(self._K, U, dt)
+        #
+        K_updated = self.K_step(self._K, U, dt)
 
-    #     K_updated -= dt * (d_s @ U)
+        K_updated -= dt * (d_s @ U)
 
-    #     #
-    #     Uhat, _ = qr(K_updated, mode='economic', check_finite=False)
-    #     copyto(self._Uhat, Uhat)
+        #
+        Uhat, _ = qr(K_updated, mode='economic', check_finite=False)
+        copyto(self._Uhat, Uhat)
 
-    #     #
-    #     matmul(self._Uhat.T, U, out=self._M)
+        #
+        matmul(self._Uhat.T, U, out=self._M)
 
-    #     #
-    #     ext_S = self._M @ S @ self._M.T
-    #     Shat = self.S_step(
-    #         self._Uhat, ext_S, self._Uhat, self._Uhat, None, None, dt)
+        #
+        ext_S = self._M @ S @ self._M.T
+        Shat = self.S_step(
+            self._Uhat, ext_S, self._Uhat, self._Uhat, None, None, dt)
 
 
-    #     #
-    #     Shat += Shat.T
-    #     Shat *= 0.5
+        #
+        Shat += Shat.T
+        Shat *= 0.5
 
-    #     return self._Uhat, Shat, self._Uhat
+        return self._Uhat, Shat, self._Uhat
 
     def augBUG_step(
             self,
@@ -645,122 +661,132 @@ class LowRankIntegrator:
 
         return self.truncate(Uhat_aug, Shat, Uhat_aug)
 
-    # def SPDaugBUG_step(
-    #     self,
-    #     U,
-    #     S,
-    #     V,
-    #     psi,
-    #     dt):
-    #     """
-    #     Perform a single step of the low-rank plus diagonal augmented BUG integrator.
-    #     Parameters
-    #     ----------
-    #     ...
-    #     Returns
-    #     -------
-    #     ...
-    #     """
+    def SPDaugBUG_step(
+        self,
+        U,
+        S,
+        V,
+        psi,
+        dt):
+        """
+        Perform a single step of the low-rank plus diagonal augmented BUG integrator.
+        Parameters
+        ----------
+        ...
+        Returns
+        -------
+        ...
+        """
 
-    #     #
-    #     rank = U.shape[1]
-    #     max_rank = 2*rank
+        #
+        rank = U.shape[1]
+        max_rank = 2*rank
 
-    #     #
-    #     K_slice = self._K[:, :rank]
-    #     K_aug = self._K[:, :max_rank]
-    #     Uhat_aug = self._Uhat[:, :max_rank]
+        #
+        K_slice = self._K[:, :rank]
+        K_aug = self._K[:, :max_rank]
+        Uhat_aug = self._Uhat[:, :max_rank]
+        Id = identity(U.shape[0])
 
-    #     #
-    #     matmul(U, S, out=K_slice)
+        #
+        matmul(U, S, out=K_slice)
 
-    #     U_proj = I - U @ U.T
-    #     U_proj_had = U_proj * U_proj
-    #     U_proj_had_pinv = np.linalg.pinv(U_proj_had)
+        U_proj = Id - U @ U.T
+        U_proj_had = U_proj * U_proj
+        U_proj_had_pinv = pinv(U_proj_had)
+        
+        Y = self._K @ U.T
+        F = self.K_step(Y, Id, dt)
+        F -= self._K
 
-    #     d_psi = U_proj_had_pinv @ diag(U_proj @ U_proj) # Add F here
+        d_psi = U_proj_had_pinv @ diag(U_proj @ F @ U_proj) # Add F here
 
-    #     psi = diag(psi + dt * d_psi)
-    #     #
-    #     self.K_step(K_slice, V, dt)
-    #     K_slice -= dt * (d_psi @ U)
-    #     copyto(self._K[:, rank:max_rank], U)
+        self._psi = diag(psi + dt * d_psi)
+        #
+        self.K_step(K_slice, V, dt)
+        K_slice -= dt * (d_psi @ U)
+        copyto(self._K[:, rank:max_rank], U)
 
-    #     #
-    #     Uhat, _ = qr(K_aug, mode='economic', check_finite=False) # K_aug is initialized at the beginning but never updated
-    #     copyto(self._Uhat[:, :Uhat.shape[1]], Uhat)
+        #
+        Uhat, _ = qr(K_aug, mode='economic', check_finite=False) # K_aug is initialized at the beginning but never updated
+        copyto(self._Uhat[:, :Uhat.shape[1]], Uhat)
 
-    #     #
-    #     M_proj = self._M[:max_rank, :rank]
-    #     matmul(Uhat_aug.T, U, out=M_proj)
+        #
+        M_proj = self._M[:max_rank, :rank]
+        matmul(Uhat_aug.T, U, out=M_proj)
 
-    #     #
-    #     ext_S = M_proj @ S @ M_proj.T
-    #     Shat = self.S_step(
-    #         Uhat_aug, ext_S, Uhat_aug, Uhat_aug, ext_S, Uhat_aug, dt)
+        #
+        ext_S = M_proj @ S @ M_proj.T
+        Shat = self.S_step(
+            Uhat_aug, ext_S, Uhat_aug, Uhat_aug, ext_S, Uhat_aug, dt)
 
-    #     #
-    #     Shat -= dt * (Uhat_aug.T @ d_psi @ Uhat_aug)
-    #     Shat += Shat.T
-    #     Shat *= 0.5
+        #
+        Shat -= dt * (Uhat_aug.T @ d_psi @ Uhat_aug)
+        Shat += Shat.T
+        Shat *= 0.5
 
-    #     return self.truncate(Uhat_aug, Shat, Uhat_aug)
+        return self.truncate(Uhat_aug, Shat, Uhat_aug)
 
-    # def isoSPDaugBUG_step(
-    #     self,
-    #     U,
-    #     S,
-    #     V,
-    #     s,
-    #     dt):
-    #     """
-    #     Perform a single step of the low-rank plus diagonal augmented BUG integrator.
-    #     Parameters
-    #     ----------
-    #     ...
-    #     Returns
-    #     -------
-    #     ...
-    #     """
+    def isoSPDaugBUG_step(
+        self,
+        U,
+        S,
+        V,
+        s,
+        dt):
+        """
+        Perform a single step of the low-rank plus diagonal augmented BUG integrator.
+        Parameters
+        ----------
+        ...
+        Returns
+        -------
+        ...
+        """
 
-    #     #
-    #     d,rank = shape(U)
-    #     max_rank = 2*rank
+        #
+        d,rank = U.shape
+        max_rank = 2*rank
 
-    #     #
-    #     K_slice = self._K[:, :rank]
-    #     K_aug = self._K[:, :max_rank]
-    #     Uhat_aug = self._Uhat[:, :max_rank]
+        #
+        K_slice = self._K[:, :rank]
+        K_aug = self._K[:, :max_rank]
+        Uhat_aug = self._Uhat[:, :max_rank]
+        Id = identity(d)
 
-    #     #
-    #     matmul(U, S, out=K_slice)
+        #
+        matmul(U, S, out=K_slice)
+        
+        Y = self._K @ U.T
+        F = self.K_step(Y, Id, dt)
+        F -= self._K
 
-    #     d_s = U_proj_had_pinv @ diag(U_proj @ U_proj) # Add F here
+        d_s =(trace(F) - trace(U.T @ F @ U)) / (d - rank) # Add F here
 
-    #     s += dt * d_s
-    #     #
-    #     self.K_step(K_slice, V, dt)
-    #     K_slice -= dt * (d_s * U)
-    #     copyto(self._K[:, rank:max_rank], U)
+        self._s += dt * d_s
+        #
+        self.K_step(K_slice, V, dt)
+        K_slice -= dt * (d_s * U)
+        copyto(self._K[:, rank:max_rank], U)
 
-    #     #
-    #     Uhat, _ = qr(K_aug, mode='economic', check_finite=False) # K_aug is initialized at the beginning but never updated
-    #     copyto(self._Uhat[:, :Uhat.shape[1]], Uhat)
+        #
+        Uhat, _ = qr(K_aug, mode='economic', check_finite=False) # K_aug is initialized at the beginning but never updated
+        copyto(self._Uhat[:, :Uhat.shape[1]], Uhat)
 
-    #     #
-    #     M_proj = self._M[:max_rank, :rank]
-    #     matmul(Uhat_aug.T, U, out=M_proj)
+        #
+        M_proj = self._M[:max_rank, :rank]
+        matmul(Uhat_aug.T, U, out=M_proj)
 
-    #     #
-    #     ext_S = M_proj @ S @ M_proj.T
-    #     Shat = self.S_step(
-    #         Uhat_aug, ext_S, Uhat_aug, Uhat_aug, ext_S, Uhat_aug, dt)
+        #
+        ext_S = M_proj @ S @ M_proj.T
+        Shat = self.S_step(
+            Uhat_aug, ext_S, Uhat_aug, Uhat_aug, ext_S, Uhat_aug, dt)
 
-    #     #
-    #     Shat += Shat.T
-    #     Shat *= 0.5
+        #
+        Shat += Shat.T
+        Shat *= 0.5
 
-    #     return self.truncate(Uhat_aug, Shat, Uhat_aug)
+        return self.truncate(Uhat_aug, Shat, Uhat_aug)
 
     # def parBUG_step(
     #         self,

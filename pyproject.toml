@@ -42,6 +42,10 @@ pytest = ">=9.0.3"
 pytest-cov = ">=7.1.0"
 coveralls = ">=4.1.0"
 
+
+[tool.poetry.group.dev-local.dependencies]
+spyder = ">=6.1.4"
+
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/pyanno4rt/seamaze/issues"
 
