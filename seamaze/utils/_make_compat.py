@@ -5,7 +5,7 @@
 # %% External package import
 
 from functools import wraps
-from inspect import signature
+from inspect import signature, Parameter
 
 # %% Compatibilizer function
 
@@ -30,31 +30,41 @@ def make_compat(func):
 
         return None
 
-    # Get the function signature
-    target = func if not hasattr(func, '__call__') else func.__call__
-    sig = signature(target)
+    # Get the function signature and parameter list
+    sig = signature(func)
+    parameters = list(sig.parameters.values())
 
-    # Pre-calculate if the function accepts variable keyword arguments
+    # Pre-calculate if the function accepts variable arguments
+    has_args = any(
+        parameter.kind == Parameter.VAR_POSITIONAL for parameter in parameters)
     has_kwargs = any(
-        p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
-        )
+        parameter.kind == Parameter.VAR_KEYWORD for parameter in parameters)
 
     @wraps(func)
     def safe_call(x, *args, **kwargs):
         """Call the wrapped function with compatible arguments."""
 
-        # Check if the function accepts any parameters
-        if has_kwargs:
+        # Check if no variable arguments are included
+        if not has_args:
 
-            # Return the function as-is
-            return func(x, *args, **kwargs)
+            # Get the number of variable arguments
+            arg_count = sum(
+                1 for parameter in parameters
+                if parameter.kind in (
+                        Parameter.POSITIONAL_ONLY,
+                        Parameter.POSITIONAL_OR_KEYWORD)
+                )
 
-        # Filter out the keyworded arguments from the signature
-        filtered_kwargs = {
-            k: v for k, v in kwargs.items() if k in sig.parameters
-            }
+            # Get the variable arguments
+            args = args[:arg_count]
 
-        # Return the function with filtered keyworded arguments
-        return func(x, *args, **filtered_kwargs)
+        # Check if no variable keyworded arguments are included
+        if not has_kwargs:
+
+            # Get the variable keyworded arguments
+            kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+
+        # Return the function with filtered arguments
+        return func(x, *args, **kwargs)
 
     return safe_call

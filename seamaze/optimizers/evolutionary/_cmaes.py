@@ -10,8 +10,8 @@ from collections import deque
 from math import inf
 from numba import njit
 from numpy import (
-    add, arange, argmin, argsort, array, clip, exp, eye, float64, full, log,
-    matmul, maximum, median, ones, sqrt, zeros)
+    add, arange, argmin, argsort, array, ascontiguousarray, clip, exp, eye,
+    float64, full, log, matmul, maximum, median, ones, sqrt, zeros)
 from numpy import sum as nsum
 from numpy.linalg import norm
 from numpy.random import default_rng
@@ -381,7 +381,7 @@ class CMAES:
         if initial_mean is not None:
 
             # Set the initial mean
-            self._mean = initial_mean
+            self._mean = initial_mean.astype(float)
 
         # Continue until termination criteria are fulfilled
         while self.check_termination() is False:
@@ -529,7 +529,8 @@ def _tell(
     inv_root_core_vec = 1.0 / (sqrt(core_vector) + 1e-15)
 
     # Transform the elite mean step
-    latent_step = left_basis.T @ elite_mean_step
+    latent_basis_t = ascontiguousarray(left_basis.T)
+    latent_step = latent_basis_t @ elite_mean_step
     elite_mean_step_tr = left_basis @ (inv_root_core_vec * latent_step)
 
     # Update the step-size evolution path
