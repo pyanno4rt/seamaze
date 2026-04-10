@@ -9,6 +9,7 @@ from numpy import (
 from numpy import sum as nsum
 from numpy.linalg import pinv, svd
 from scipy.linalg import qr
+from scipy.sparse import identity
 
 # %% Dynamical low-rank integrator class
 
@@ -383,15 +384,20 @@ class LowRankIntegrator:
         L_aug = self._L[:, :max_rank]
         Uhat_aug = self._Uhat[:, :max_rank]
         Vhat_aug = self._Vhat[:, :max_rank]
-
+        Id = identity(U.shape[0])
         #
         matmul(U, S, out=self._K)
 
-        U_proj = eye() - U @ U.T
+        U_proj = Id - U @ U.T
         U_proj_had = U_proj * U_proj
         U_proj_had_pinv = pinv(U_proj_had)
-
-        d_psi = U_proj_had_pinv @ diag(U_proj @ U_proj) # Add F here
+        
+        
+        Y = self._K @ U.T
+        F = self.K_step(Y, Id, dt)
+        F -= self._K
+        
+        d_psi = U_proj_had_pinv @ diag(U_proj @ F @ U_proj) # Add F here
 
         #
         self._psi += dt * d_psi
