@@ -337,7 +337,7 @@ class LowRankIntegrator:
 
             #
             copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
-        else
+        else:
 
             #
             copyto(self._K[:, rank:max_rank], U[:, :aug_size])
@@ -350,7 +350,7 @@ class LowRankIntegrator:
 
             #
             copyto(self._L[:, rank:max_rank], np.random.rand(m, aug_size))
-        else
+        else:
 
             #
             copyto(self._L[:, rank:max_rank], V[:, :aug_size])
@@ -553,7 +553,7 @@ class LowRankIntegrator:
 
             #
             copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
-        else
+        else:
 
             #
             copyto(self._K[:, rank:max_rank], U[:, :aug_size])
@@ -566,7 +566,7 @@ class LowRankIntegrator:
 
             #
             copyto(self._L[:, rank:max_rank], np.random.rand(m, aug_size))
-        else
+        else:
 
             #
             copyto(self._L[:, rank:max_rank], V[:, :aug_size])
@@ -637,7 +637,7 @@ class LowRankIntegrator:
 
             #
             copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
-        else
+        else:
 
             #
             copyto(self._K[:, rank:max_rank], U[:, :aug_size])
