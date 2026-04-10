@@ -7,6 +7,7 @@
 from numpy import (
     clip, copyto, diag, eye, float64, matmul, maximum, zeros)
 from numpy import sum as nsum
+from numpy.random import rand
 from numpy.linalg import pinv, svd, trace
 from scipy.linalg import qr
 from scipy.sparse import identity
@@ -309,7 +310,7 @@ class LowRankIntegrator:
         #
         rank = U.shape[1]
         n = U.shape[0]
-        m = L.shape[0]
+        m = V.shape[0]
 
         #
         max_rank = min(2*rank, self._capacity)
@@ -336,7 +337,7 @@ class LowRankIntegrator:
         if aug_size > 0 and augmentation == 'random':
 
             #
-            copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
+            copyto(self._K[:, rank:max_rank], rand(n, aug_size)+1e-6)
         else:
 
             #
@@ -349,7 +350,7 @@ class LowRankIntegrator:
         if aug_size > 0 and augmentation == 'random':
 
             #
-            copyto(self._L[:, rank:max_rank], np.random.rand(m, aug_size))
+            copyto(self._L[:, rank:max_rank], rand(m, aug_size)+1e-6)
         else:
 
             #
@@ -525,7 +526,7 @@ class LowRankIntegrator:
         #
         rank = U.shape[1]
         n = U.shape[0]
-        m = L.shape[0]
+        m = V.shape[0]
 
         #
         max_rank = min(2*rank, self._capacity)
@@ -549,10 +550,10 @@ class LowRankIntegrator:
         self.K_step(K_slice, V, dt)
 
         #
-        if aug_size > 0 and augmentation == 'random':
+        if aug_size > 0 and self.augmentation == 'random':
 
             #
-            copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
+            copyto(self._K[:, rank:max_rank], rand(n, aug_size)+1e-6)
         else:
 
             #
@@ -562,10 +563,10 @@ class LowRankIntegrator:
         self.L_step(L_slice, U, dt)
 
         #
-        if aug_size > 0 and augmentation == 'random':
+        if aug_size > 0 and self.augmentation == 'random':
 
             #
-            copyto(self._L[:, rank:max_rank], np.random.rand(m, aug_size))
+            copyto(self._L[:, rank:max_rank], rand(m, aug_size)+1e-6)
         else:
 
             #
@@ -613,7 +614,6 @@ class LowRankIntegrator:
         #
         rank = U.shape[1]
         n = U.shape[0]
-        m = L.shape[0]
         
         #
         max_rank = min(2*rank, self._capacity)
@@ -633,10 +633,10 @@ class LowRankIntegrator:
         self.K_step(K_slice, U, dt)
 
         #
-        if aug_size > 0 and augmentation == 'random':
+        if aug_size > 0 and self.augmentation == 'random':
 
             #
-            copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
+            copyto(self._K[:, rank:max_rank], rand(n, aug_size)+1e-6)
         else:
 
             #
