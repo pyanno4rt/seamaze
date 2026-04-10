@@ -66,7 +66,9 @@ class DLRCMAES:
                            'fixedSPDBUG', 'augBUG', 'symmetricaugBUG'}, \
         default='fixedsymmetricBUG'
         Name of the low-rank integrator.
-
+    low_rank_augmentation : {'oldBase', 'random'}, \
+        default='oldBase'
+        Strategy for basis augmentation in rank-adaptive integrators.
     low_rank_dimension : int, default=None
         Initial rank of the approximation. Defaults to \
         `number_of_variables` // 10.
@@ -119,6 +121,7 @@ class DLRCMAES:
             number_of_individuals=None,
             initial_sigma=0.3,
             low_rank_integrator='fixedsymmetricBUG',
+            low_rank_augmentation='oldBase',
             low_rank_dimension=None,
             low_rank_tolerance_rel=1e-2,
             low_rank_tolerance_abs=1e-8,
@@ -154,6 +157,7 @@ class DLRCMAES:
         self.integrator = LowRankIntegrator(
             name=low_rank_integrator,
             rank=rank,
+            augmentation=low_rank_augmentation,
             truncation_tolerance_rel=low_rank_tolerance_rel,
             truncation_tolerance_abs=low_rank_tolerance_abs,
             N_conserved_basis=0,

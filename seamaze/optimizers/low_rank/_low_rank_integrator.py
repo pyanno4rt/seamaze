@@ -29,6 +29,9 @@ class LowRankIntegrator:
     rank : int
         Initial rank of the approximation.
 
+    augmentation : {'oldBase','random'}
+                Strategy for basis augmentation in rank-adpative integrators.
+
     truncation_tolerance_rel : float
         Relative tolerance of the rank truncation.
 
@@ -52,6 +55,7 @@ class LowRankIntegrator:
         self,
         name,
         rank,
+        augmentation,
         truncation_tolerance_rel,
         truncation_tolerance_abs,
         N_conserved_basis,
@@ -62,6 +66,7 @@ class LowRankIntegrator:
         # Get the input attributes
         self.name = name
         self.rank = rank
+        self.augmentation = augmentation
         self.truncation_tolerance_rel = truncation_tolerance_rel
         self.truncation_tolerance_abs = truncation_tolerance_abs
         self.N_conserved_basis = N_conserved_basis
@@ -298,6 +303,8 @@ class LowRankIntegrator:
 
         #
         rank = U.shape[1]
+        n = U.shape[0]
+        m = L.shape[0]
 
         #
         max_rank = min(2*rank, self._capacity)
@@ -321,7 +328,11 @@ class LowRankIntegrator:
         self.K_step(K_slice, V, dt)
 
         #
-        if aug_size > 0:
+        if aug_size > 0 && augmentation == 'random':
+
+            #
+            copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
+        else
 
             #
             copyto(self._K[:, rank:max_rank], U[:, :aug_size])
@@ -330,7 +341,11 @@ class LowRankIntegrator:
         self.L_step(L_slice, U, dt)
 
         #
-        if aug_size > 0:
+        if aug_size > 0 && augmentation == 'random':
+
+            #
+            copyto(self._L[:, rank:max_rank], np.random.rand(m, aug_size))
+        else
 
             #
             copyto(self._L[:, rank:max_rank], V[:, :aug_size])
@@ -493,6 +508,8 @@ class LowRankIntegrator:
 
         #
         rank = U.shape[1]
+        n = U.shape[0]
+        m = L.shape[0]
 
         #
         max_rank = min(2*rank, self._capacity)
@@ -516,7 +533,11 @@ class LowRankIntegrator:
         self.K_step(K_slice, V, dt)
 
         #
-        if aug_size > 0:
+        if aug_size > 0 && augmentation == 'random':
+
+            #
+            copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
+        else
 
             #
             copyto(self._K[:, rank:max_rank], U[:, :aug_size])
@@ -525,7 +546,11 @@ class LowRankIntegrator:
         self.L_step(L_slice, U, dt)
 
         #
-        if aug_size > 0:
+        if aug_size > 0 && augmentation == 'random':
+
+            #
+            copyto(self._L[:, rank:max_rank], np.random.rand(m, aug_size))
+        else
 
             #
             copyto(self._L[:, rank:max_rank], V[:, :aug_size])
@@ -571,7 +596,9 @@ class LowRankIntegrator:
 
         #
         rank = U.shape[1]
-
+        n = U.shape[0]
+        m = L.shape[0]
+        
         #
         max_rank = min(2*rank, self._capacity)
 
@@ -590,7 +617,11 @@ class LowRankIntegrator:
         self.K_step(K_slice, U, dt)
 
         #
-        if aug_size > 0:
+        if aug_size > 0 && augmentation == 'random':
+
+            #
+            copyto(self._K[:, rank:max_rank], np.random.rand(n, aug_size))
+        else
 
             #
             copyto(self._K[:, rank:max_rank], U[:, :aug_size])
