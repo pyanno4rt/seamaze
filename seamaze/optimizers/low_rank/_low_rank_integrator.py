@@ -7,7 +7,7 @@
 from numpy import (
     clip, copyto, diag, eye, float64, matmul, maximum, zeros)
 from numpy import sum as nsum
-from numpy.linalg import pinv, svd
+from numpy.linalg import pinv, svd, trace
 from scipy.linalg import qr
 from scipy.sparse import identity
 
@@ -426,58 +426,64 @@ class LowRankIntegrator:
 
         return self._Uhat, Shat, self._Uhat
 
-    # def isofixedSPDBUG_step(
-    #         self,
-    #         U,
-    #         S,
-    #         _,
-    #         s,
-    #         dt):
-    #     """
-    #     Perform a single step of the fixed-rank SPD BUG integrator.
-    #     Parameters
-    #     ----------
-    #     ...
-    #     Returns
-    #     -------
-    #     ...
-    #     """
+    def isofixedSPDBUG_step(
+            self,
+            U,
+            S,
+            _,
+            s,
+            dt):
+        """
+        Perform a single step of the fixed-rank SPD BUG integrator.
+        Parameters
+        ----------
+        ...
+        Returns
+        -------
+        ...
+        """
 
-    #     #
+        #
 
-    #     d,rank = shape(U)
-    #     # Evaluate F from the RHS
-    #     d_s = (np.linalg.trace(F) - np.linalg.trace(U.T @ F @ U)) / (d - rank)
+        d,rank = U.shape
+        Id = identity(d)
+        
+        # Evaluate F from the RHS
+        Y = self._K @ U.T
+        F = self.K_step(Y, Id, dt)
+        F -= self._K
+        
+        d_s = (trace(F) - trace(U.T @ F @ U)) / (d - rank)
 
-    #     matmul(U, S, out=self._K)
+        matmul(U, S, out=self._K)
 
-    #     self._K -= s * U
+        self._K -= s * U
 
-    #     s += dt * d_s
+        s += dt * d_s
 
-    #     #
-    #     K_updated = self.K_step(self._K, U, dt)
+        #
+        K_updated = self.K_step(self._K, U, dt)
 
-    #     K_updated -= dt * (d_s @ U)
+        K_updated -= dt * (d_s @ U)
 
-    #     #
-    #     Uhat, _ = qr(K_updated, mode='economic', check_finite=False)
-    #     copyto(self._Uhat, Uhat)
+        #
+        Uhat, _ = qr(K_updated, mode='economic', check_finite=False)
+        copyto(self._Uhat, Uhat)
 
-    #     #
-    #     matmul(self._Uhat.T, U, out=self._M)
+        #
+        matmul(self._Uhat.T, U, out=self._M)
 
-    #     #
-    #     ext_S = self._M @ S @ self._M.T
-    #     Shat = self.S_step(
-    #         self._Uhat, ext_S, self._Uhat, self._Uhat, None, None, dt)
+        #
+        ext_S = self._M @ S @ self._M.T
+        Shat = self.S_step(
+            self._Uhat, ext_S, self._Uhat, self._Uhat, None, None, dt)
 
 
-    #     #
-    #     Shat += Shat.T
-    #     Shat *= 0.5
+        #
+        Shat += Shat.T
+        Shat *= 0.5
 
-    #     return self._Uhat, Shat, self._Uhat
+        return self._Uhat, Shat, self._Uhat
 
     def augBUG_step(
             self,
