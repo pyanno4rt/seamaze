@@ -379,27 +379,21 @@ class LowRankIntegrator:
 
         #
         rank = U.shape[1]
-        max_rank = 2*rank
-
         #
         K_slice = self._K[:, :rank]
-        K_aug = self._K[:, :max_rank]
-        L_slice = self._L[:, :rank]
-        L_aug = self._L[:, :max_rank]
-        Uhat_aug = self._Uhat[:, :max_rank]
-        Vhat_aug = self._Vhat[:, :max_rank]
-        Id = identity(U.shape[0])
+        Uhat_slice = self._Uhat[:, :rank]
+        Id = eye(U.shape[0])
         #
-        matmul(U, S, out=self._K)
+        matmul(U, S, out=K_slice)
 
         U_proj = Id - U @ U.T
         U_proj_had = U_proj * U_proj
         U_proj_had_pinv = pinv(U_proj_had)
         
         
-        Y = self._K @ U.T
+        Y = K_slice @ U.T
         F = self.K_step(Y, Id, dt)
-        F -= self._K
+        F -= K_slice
         
         d_psi = U_proj_had_pinv @ diag(U_proj @ F @ U_proj) # Add F here
 
@@ -407,23 +401,24 @@ class LowRankIntegrator:
         self._psi += dt * d_psi
 
         #
-        K_updated = self.K_step(self._K, U, dt)
+        K_updated = self.K_step(K_slice, U, dt)
 
         K_updated -= dt * (d_psi @ U)
 
         #
         Uhat, _ = qr(K_updated, mode='economic', check_finite=False)
-        copyto(self._Uhat, Uhat)
+        copyto(Uhat_slice, Uhat)
 
         #
-        matmul(self._Uhat.T, U, out=self._M)
+        M_proj = self._M[:rank, :rank]
+        matmul(Uhat_slice.T, U, out=M_proj)
 
         #
-        ext_S = self._M @ S @ self._M.T
+        ext_S = M_proj @ S @ M_proj.T
         Shat = self.S_step(
-            self._Uhat, ext_S, self._Uhat, self._Uhat, None, None, dt)
+            Uhat_slice, ext_S, Uhat_slice, None, None, None, dt)
 
-        Shat -= dt * (self._Uhat.T @ d_psi @ self._Uhat)
+        Shat -= dt * (Uhat_slice.T @ diag(d_psi) @ Uhat_slice)
         #
         Shat += Shat.T
         Shat *= 0.5
