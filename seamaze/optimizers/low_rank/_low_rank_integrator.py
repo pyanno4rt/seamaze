@@ -714,7 +714,7 @@ class LowRankIntegrator:
         """
 
         #
-        d,rank = shape(U)
+        d,rank = U.shape
         max_rank = 2*rank
 
         #
