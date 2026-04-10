@@ -89,6 +89,7 @@ class LowRankIntegrator:
         self._M = None
         self._N = None
         self._psi = None
+        self._s = None
 
         # Initialize the capacity
         self._capacity = None
@@ -149,6 +150,9 @@ class LowRankIntegrator:
         # Initialize psi
         self._psi = zeros(
             (number_of_variables, number_of_variables), dtype=float64)
+        
+        # Initialize s
+        self._s = 0.0
 
     def update(
             self,
