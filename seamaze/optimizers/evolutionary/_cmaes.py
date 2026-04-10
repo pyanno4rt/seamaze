@@ -17,12 +17,16 @@ from numpy.linalg import norm
 from numpy.random import default_rng
 from scipy.linalg import eigh
 
-# %% Covariance matrix adaptation evolution algorithm
+# %% Internal package import
+
+from seamaze.utils import make_compat
+
+# %% Covariance matrix adaptation evolution algorithm (CMA-ES)
 
 
 class CMAES:
     """
-    Covariance matrix adaptation evolution strategy class.
+    Covariance matrix adaptation evolution strategy (CMA-ES) class.
 
     This class implements the CMA-ES algorithm.
 
@@ -117,7 +121,7 @@ class CMAES:
 
         # Initialize the optimization problem variables
         self._number_of_variables = number_of_variables
-        self.objective = objective
+        self.objective = make_compat(objective)
         self.gradient = gradient
         self.lower_variable_bounds = (
             full(self._number_of_variables, -inf)
@@ -243,7 +247,7 @@ class CMAES:
             # Compute the natural gradient step
             gradient_step = natural_gradient * rescale
 
-            # Add the gradient steps (with mirroring)
+            # Add the mirrored gradient steps
             self._steps[-2] = -gradient_step
             self._steps[-1] = gradient_step
 
@@ -600,182 +604,6 @@ def _tell(
     cov += lr_rank_mu * rank_mu_term
 
     return sigma_update
-
-# %% Toy problem class
-
-from math import pi
-from numpy import cos, sin
-
-class ToyProblem:
-    """
-    A toy problem class to test the CMA algorithm with different benchmark \
-    functions.
-
-    Parameters
-    ----------
-    name : {'rastrigin', 'sphere', 'styblinski-tang'}
-        Name of the test function.
-
-    initial_x : ndarray
-        Initial decision variables.
-
-    Attributes
-    ----------
-    name : {'rastrigin', 'sphere', 'styblinski-tang'}
-        See 'Parameters'.
-
-    f : function
-        Objective function.
-
-    g : function
-        Gradient function.
-
-    variable_bounds : tuple
-        Tuple with two lists for the lower and upper variable bounds.
-    """
-
-    def __init__(
-            self,
-            name,
-            x0):
-
-        # Get the function name
-        self.name = name
-        self.x0 = x0
-
-        # Map the names
-        functions = {
-            'rastrigin': self.rastrigin,
-            'sphere': self.sphere,
-            'styblinski-tang': self.styblinski_tang}
-
-        # Get the objective and gradient functions
-        self.f, self.g, self.variable_bounds = functions[name]()
-
-    def objective(self, x):
-        """
-        Compute the objective.
-
-        Parameters
-        ----------
-        x : ndarray
-            Decision vector.
-
-        Returns
-        -------
-        int or float
-            Objective value.
-        """
-
-        return self.f(x)
-
-    def gradient(
-            self,
-            x):
-        """
-        Compute the gradient.
-
-        Parameters
-        ----------
-        x : ndarray
-            Decision vector.
-
-        Returns
-        -------
-        ndarray
-            Gradient.
-        """
-
-        return self.g(x)
-
-    def rastrigin(self):
-        """
-        Rastrigin function.
-
-        Global minimum: f(0,...,0) = 0.0, search domain: [-5.12, 5.12].
-        """
-
-        def f(x, track=False):
-            return 10*len(x) + sum(x**2 - 10*cos(2*pi*x))
-
-        def g(x):
-            return 2*x+20*pi*sin(2*pi*x)
-
-        bounds = ([-5.12]*len(self.x0), [5.12]*len(self.x0))
-
-        return f, g, bounds
-
-    def sphere(self):
-        """
-        Sphere function.
-
-        Global minimum: f(0,...,0) = 0.0, search domain: [-inf, inf].
-        """
-
-        def f(x, track=False):
-            return sum(x**2)
-
-        def g(x):
-            return 2.0*x
-
-        bounds = ([-inf]*len(self.x0), [inf]*len(self.x0))
-
-        return f, g, bounds
-
-    def styblinski_tang(self):
-        """
-        Styblinski-Tang function.
-
-        Global minimum: -39.16617*len(x) < f(-2.903534,...,-2.903534) \
-        < -39.16616*len(x), search domain: [-5, 5].
-        """
-
-        def f(x, track=False):
-            return sum(x**4-16*x**2+5*x)/2
-
-        def g(x):
-            return 2.0*x**3-16*x+2.5
-
-        bounds = ([-5.0]*len(self.x0), [5.0]*len(self.x0))
-
-        return f, g, bounds
-
-
-# %% Test run
-
-# Set the initial vector
-initial_x = array([5.0]*2)
-
-# Initialize the toy problem
-prob = ToyProblem(
-    name='styblinski-tang',
-    x0=initial_x)
-
-# Initialize the CMA solver
-solver = CMAES(
-    number_of_variables=len(initial_x),
-    objective=prob.f,
-    gradient=prob.g,
-    lower_variable_bounds=array(prob.variable_bounds[0]),
-    upper_variable_bounds=array(prob.variable_bounds[1]),
-    number_of_individuals=100,
-    initial_sigma=2.0,
-    maximum_iterations=200,
-    maximum_wall_time=7200,
-    fitness_threshold=None,
-    fitness_window_size=30,
-    tolerance=1e-3,
-    sigma_threshold=1e-3,
-    store_singular_values=False,
-    update_interval=1,
-    rank=None,
-    callback=None)
-
-# Optimize the variables
-result = solver.optimize(initial_x)
-
-# Get the iteration-wise eigenvalues
-sv = solver._singular_values
 
 # %% Plot covariance matrix over function
 

@@ -1,4 +1,7 @@
-"""Low-rank covariance matrix adaptation evolution strategy (LR-CMA-ES)."""
+"""
+Dynamical low-rank covariance matrix adaptation evolution strategy
+(DLR-CMA-ES).
+"""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
@@ -19,16 +22,19 @@ from scipy.linalg import eigh
 
 # %% Internal package import
 
-from pyanno4rt.optimization.solvers.cmaes import LowRankIntegrator
+from seamaze.optimizers.low_rank import LowRankIntegrator
+from seamaze.utils import make_compat
 
-# %% Low-rank covariance matrix adaptation evolution algorithm
+# %% Dynamical low-rank covariance matrix adaptation evolution algorithm
+# (DLR-CMA-ES)
 
 
-class LRCMAES:
+class DLRCMAES:
     """
-    Low-rank covariance matrix adaptation evolution strategy class.
+    Dynamical low-rank covariance matrix adaptation evolution strategy \
+    (DLR-CMA-ES) class.
 
-    This class implements the LR-CMA-ES algorithm.
+    This class implements the DLR-CMA-ES algorithm.
 
     Parameters
     ----------
@@ -130,7 +136,7 @@ class LRCMAES:
 
         # Initialize the optimization problem variables
         self._number_of_variables = number_of_variables
-        self.objective = objective
+        self.objective = make_compat(objective)
         self.gradient = gradient
         self.lower_variable_bounds = (
             full(number_of_variables, -inf)

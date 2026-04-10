@@ -7,7 +7,7 @@
 from numpy import (
     clip, copyto, diag, eye, float64, matmul, maximum, zeros)
 from numpy import sum as nsum
-from numpy.linalg import norm, pinv, svd
+from numpy.linalg import pinv, svd
 from scipy.linalg import qr
 
 # %% Dynamical low-rank integrator class

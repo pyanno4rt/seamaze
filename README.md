@@ -52,13 +52,13 @@ git clone https://github.com/pyanno4rt/seamaze.git
 ###### Classical CMA-ES
 
 ```python
-from seamaze.cmaes import CMAES
+from seamaze.optimizers.evolutionary import CMAES
 ```
 
 ###### Dynamical low-rank CMA-ES
 
 ```python
-from seamaze.dlrcmaes import DLRCMAES
+from seamaze.optimizers.low_rank import DLRCMAES
 ```
 
 ### Dependencies
@@ -71,11 +71,6 @@ from seamaze.dlrcmaes import DLRCMAES
 | `numba`                        | <font size="3"> >=0.65.0 </font>      |
 | `matplotlib`                   | <font size="3"> >=3.10.8 </font>      |
 | `seaborn`                      | <font size="3"> >=0.13.2 </font>      |
-| `pyqt5-qt5`                    | <font size="3"> ==5.15.2 </font>      |
-| `pyqt5`                        | <font size="3"> ==5.15.10 </font>     |
-| `setuptools`                   | <font size="3"> <81.0.0 </font>       |
-
-Moreover, we are using **Python v3.11.11** and **Spyder IDE v6.1.4** for development.
 
 # Development :rocket:
 
@@ -107,7 +102,7 @@ To cite *seamaze*, either use the link in the right sidebar of the Github landin
 @software{seamaze,
   title = {{seamaze}: a python library for classical and dynamical low-rank CMA-ES},
   author = {Ortkamp, Tim and Patwardhan, Chinmay and Stammer, Pia},
-  version = {0.0.1},
+  version = {0.0.2},
   license = {MIT},
   year = {2026},
   publisher = {GitHub},
