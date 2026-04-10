@@ -692,61 +692,66 @@ class LowRankIntegrator:
 
         return self.truncate(Uhat_aug, Shat, Uhat_aug)
 
-    # def isoSPDaugBUG_step(
-    #     self,
-    #     U,
-    #     S,
-    #     V,
-    #     s,
-    #     dt):
-    #     """
-    #     Perform a single step of the low-rank plus diagonal augmented BUG integrator.
-    #     Parameters
-    #     ----------
-    #     ...
-    #     Returns
-    #     -------
-    #     ...
-    #     """
+    def isoSPDaugBUG_step(
+        self,
+        U,
+        S,
+        V,
+        s,
+        dt):
+        """
+        Perform a single step of the low-rank plus diagonal augmented BUG integrator.
+        Parameters
+        ----------
+        ...
+        Returns
+        -------
+        ...
+        """
 
-    #     #
-    #     d,rank = shape(U)
-    #     max_rank = 2*rank
+        #
+        d,rank = shape(U)
+        max_rank = 2*rank
 
-    #     #
-    #     K_slice = self._K[:, :rank]
-    #     K_aug = self._K[:, :max_rank]
-    #     Uhat_aug = self._Uhat[:, :max_rank]
+        #
+        K_slice = self._K[:, :rank]
+        K_aug = self._K[:, :max_rank]
+        Uhat_aug = self._Uhat[:, :max_rank]
+        Id = identity(d)
 
-    #     #
-    #     matmul(U, S, out=K_slice)
+        #
+        matmul(U, S, out=K_slice)
+        
+        Y = self._K @ U.T
+        F = self.K_step(Y, Id, dt)
+        F -= self._K
 
-    #     d_s = U_proj_had_pinv @ diag(U_proj @ U_proj) # Add F here
+        d_s =(trace(F) - trace(U.T @ F @ U)) / (d - rank) # Add F here
 
-    #     s += dt * d_s
-    #     #
-    #     self.K_step(K_slice, V, dt)
-    #     K_slice -= dt * (d_s * U)
-    #     copyto(self._K[:, rank:max_rank], U)
+        self._s += dt * d_s
+        #
+        self.K_step(K_slice, V, dt)
+        K_slice -= dt * (d_s * U)
+        copyto(self._K[:, rank:max_rank], U)
 
-    #     #
-    #     Uhat, _ = qr(K_aug, mode='economic', check_finite=False) # K_aug is initialized at the beginning but never updated
-    #     copyto(self._Uhat[:, :Uhat.shape[1]], Uhat)
+        #
+        Uhat, _ = qr(K_aug, mode='economic', check_finite=False) # K_aug is initialized at the beginning but never updated
+        copyto(self._Uhat[:, :Uhat.shape[1]], Uhat)
 
-    #     #
-    #     M_proj = self._M[:max_rank, :rank]
-    #     matmul(Uhat_aug.T, U, out=M_proj)
+        #
+        M_proj = self._M[:max_rank, :rank]
+        matmul(Uhat_aug.T, U, out=M_proj)
 
-    #     #
-    #     ext_S = M_proj @ S @ M_proj.T
-    #     Shat = self.S_step(
-    #         Uhat_aug, ext_S, Uhat_aug, Uhat_aug, ext_S, Uhat_aug, dt)
+        #
+        ext_S = M_proj @ S @ M_proj.T
+        Shat = self.S_step(
+            Uhat_aug, ext_S, Uhat_aug, Uhat_aug, ext_S, Uhat_aug, dt)
 
-    #     #
-    #     Shat += Shat.T
-    #     Shat *= 0.5
+        #
+        Shat += Shat.T
+        Shat *= 0.5
 
-    #     return self.truncate(Uhat_aug, Shat, Uhat_aug)
+        return self.truncate(Uhat_aug, Shat, Uhat_aug)
 
     # def parBUG_step(
     #         self,
