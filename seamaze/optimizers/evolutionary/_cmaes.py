@@ -10,8 +10,8 @@ from collections import deque
 from math import inf
 from numba import njit
 from numpy import (
-    add, arange, argmin, argsort, array, ascontiguousarray, clip, exp, eye,
-    float64, full, log, matmul, maximum, median, ones, sqrt, zeros)
+    add, arange, argmin, argsort, array, clip, exp, eye, float64, full, log,
+    matmul, maximum, median, ones, sqrt, zeros)
 from numpy import sum as nsum
 from numpy.linalg import norm
 from numpy.random import default_rng
@@ -19,9 +19,10 @@ from scipy.linalg import eigh
 
 # %% Internal package import
 
+from seamaze.logging import Logging
 from seamaze.utils import make_compat
 
-# %% Covariance matrix adaptation evolution algorithm (CMA-ES)
+# %% Class definition
 
 
 class CMAES:
@@ -78,23 +79,18 @@ class CMAES:
         Minimum allowed step size. If the step size falls below this limit, \
         optimization stops (convergence/collapse criterion).
 
-    store_singular_values : bool, default=False
-        Indicator for recording the history of singular values (eigenvalues) \
-        of the covariance matrix for later analysis.
-
     update_interval : int, default=1
-        Frequency of the low-rank update (in generations). Larger values \
+        Frequency of the covariance update (in generations). Larger values \
         (e.g. 10) can significantly speed up the algorithm for \
         high-dimensional problems.
 
-    rank : None or int, default=None
-        Rank of the covariance matrix approximation. If specified, a low-rank \
-        update is performed. Defaults to `number_of_variables`.
-
     callback : Callable[[dict], None], default=None
-        Optional function called at the end of each iteration. Must accept a \
-        dictionary with the current results.
+        Optional function called at the end of each iteration. Must accept \
+        the solver instance.
     """
+
+    # Initialize the logger
+    logger = Logging('CMA-ES', 'info')
 
     def __init__(
             self,
@@ -111,10 +107,11 @@ class CMAES:
             fitness_window_size=20,
             tolerance=1e-3,
             sigma_threshold=1e-3,
-            store_singular_values=False,
             update_interval=1,
-            rank=None,
             callback=None):
+
+        # Log a message about the initialization
+        self.logger.info('Initializing CMA-ES ...')
 
         # Set the random seed
         self._rng = default_rng(42)
@@ -129,13 +126,8 @@ class CMAES:
         self.upper_variable_bounds = (
             full(self._number_of_variables, inf)
             if upper_variable_bounds is None else upper_variable_bounds)
-        self._rank = (
-            self._number_of_variables if rank is None
-            else min(rank, self._number_of_variables))
 
-        # Initialize the low-rank variables
-        self._store_singular_values = store_singular_values
-        self._singular_values = []
+        # Initialize the update frequency
         self._update_interval = update_interval
 
         # Initialize the population and elite sizes
@@ -153,19 +145,22 @@ class CMAES:
         self._mu_eff = 1 / nsum(self._weights**2)
 
         # Initialize the learning rates
-        self._lr_sigma = (self._mu_eff + 2) / (self._rank + self._mu_eff + 3)
-        self._lr_cov = 4 / (self._rank + 4)
-        self._lr_rank_1 = (
+        self._lr_sigma = (
+            (self._mu_eff + 2) / (self._number_of_variables + self._mu_eff + 3)
+            )
+        self._lr_cov = 4 / (self._number_of_variables + 4)
+        self._lr_rank_one = (
             2 * min(1, self._pop_size/6) /
-            ((self._rank + 1.3)**2 + self._mu_eff))
+            ((self._number_of_variables + 1.3)**2 + self._mu_eff))
         self._lr_rank_mu = (
             2*(self._mu_eff + 1/self._mu_eff - 2) /
-            ((self._rank + 2)**2 + self._mu_eff))
+            ((self._number_of_variables + 2)**2 + self._mu_eff))
         self._lr_mean = 1.0
 
         # Initialize the damping coefficient
         self._damp_sigma = (
-            1 + 2*max(0, sqrt((self._mu_eff - 1) / self._rank) - 1)
+            1
+            + 2*max(0, sqrt((self._mu_eff-1) / self._number_of_variables)-1)
             + self._lr_sigma)
 
         # Initialize the expected path length
@@ -196,10 +191,10 @@ class CMAES:
         self._cov = eye(self._number_of_variables, dtype=float64)
 
         self._left_basis = eye(
-            self._number_of_variables, self._rank, order='F', dtype=float64)
-        self._core_vector = ones(self._rank, dtype=float64)
+            self._number_of_variables, order='F', dtype=float64)
+        self._core_vector = ones(self._number_of_variables, dtype=float64)
         self._root_cov = eye(
-            self._number_of_variables, self._rank, order='F', dtype=float64)
+            self._number_of_variables, order='F', dtype=float64)
 
         # Initialize the stopping criteria and tracking variables
         self.maximum_iterations = maximum_iterations
@@ -207,6 +202,7 @@ class CMAES:
         self.fitness_threshold = fitness_threshold
         self.sigma_threshold = sigma_threshold or 0.0
         self.tolerance = tolerance
+        self._fitness = None
         self._fitness_history = deque(maxlen=fitness_window_size)
         self._callback = callback
         self._result = {
@@ -227,7 +223,8 @@ class CMAES:
         """
 
         # Sample from the standard multivariate Gaussian
-        zsamples = self._rng.standard_normal((self._pop_size, self._rank))
+        zsamples = self._rng.standard_normal(
+            (self._pop_size, self._number_of_variables))
 
         # Sample steps from the multivariate Gaussian
         matmul(zsamples, self._root_cov.T, out=self._steps)
@@ -310,9 +307,9 @@ class CMAES:
             fitness, self._steps, self._weights, self._left_basis,
             self._core_vector, self._path_sigma, self._path_cov, self._mean,
             self._sigma, self._cov, self._lr_sigma, self._lr_cov,
-            self._lr_mean, self._lr_rank_1, self._lr_rank_mu, self._mu_eff,
+            self._lr_mean, self._lr_rank_one, self._lr_rank_mu, self._mu_eff,
             self._damp_sigma, self._expected_path_length, self._opt_iter,
-            self._elite_size, self._rank)
+            self._elite_size)
 
         # Check if the low-rank factors should be updated
         if self._opt_iter % self._update_interval == 0:
@@ -325,30 +322,8 @@ class CMAES:
             self._core_vector = self._core_vector[::-1]
             self._left_basis = self._left_basis[:, ::-1]
 
-            # Check if the selected rank is lower than the dimensionality
-            if self._rank < self._number_of_variables:
-
-                # Get the energy scaling
-                energy_scale = (
-                    nsum(self._core_vector) /
-                    (nsum(self._core_vector[:self._rank]) + 1e-15)
-                    )
-
-                # Rescale the truncated singular values
-                self._core_vector = (
-                    self._core_vector[:self._rank] * energy_scale)
-
-                # Truncate the singular vectors
-                self._left_basis = self._left_basis[:, :self._rank]
-
             # Clip the singular values
             maximum(self._core_vector, 1e-12, out=self._core_vector)
-
-            # Check if singular values should be stored
-            if self._store_singular_values:
-
-                # Append the singular values
-                self._singular_values.append(self._core_vector)
 
             # Symmetrize the covariance matrix for stability
             self._cov = (
@@ -383,29 +358,54 @@ class CMAES:
             # Set the initial mean
             self._mean = initial_mean.astype(float)
 
-        # Continue until termination criteria are fulfilled
-        while self.check_termination() is False:
+        try:
 
-            # "Ask" for a new population
-            self.ask()
+            # Continue until termination criteria are fulfilled
+            while self.check_termination() is False:
 
-            # Evaluate the population's fitness
-            fitness = self.evaluate()
+                # "Ask" for a new population
+                self.ask()
 
-            # "Tell" the algorithm to update its parameters
-            self.tell(fitness)
+                # Evaluate the population's fitness
+                self._fitness = self.evaluate()
 
-            # Check if a callback has been provided
-            if self._callback is not None:
+                # "Tell" the algorithm to update its parameters
+                self.tell(self._fitness)
 
-                # Pass the current results to the callback
-                self._callback(self._result)
+                # Check if a callback has been provided
+                if self._callback is not None:
 
-            # Increment the iteration counter
-            self._opt_iter += 1
+                    # Pass the current results to the callback
+                    self._callback(self)
+
+                # Log a message about the current result
+                self.logger.info(
+                    f'Iteration {self._opt_iter}: '
+                    f'f={round(self._result["optimal_value"], 6)}')
+
+                # Increment the iteration counter
+                self._opt_iter += 1
+
+        except KeyboardInterrupt:
+
+            # Log a message about the user stopping
+            self.logger.warning("Optimization interrupted by user ...")
+            self._result['solver_info'] = 'STOPPED_BY_USER'
 
         # Store the runtimes
         self._result['wall_time'] = time()-self._wall_start
+
+        # Log a message about the final result
+        short_sol = (
+            str(self._result["optimal_point"][:5]).replace("\n", "")[:-1]
+            + " ...]")
+        self.logger.info(
+            'Optimization finished | '
+            f'Best value: {round(self._result["optimal_value"], 6)} | '
+            f'Best solution: {short_sol} | '
+            f'Iterations: {self._opt_iter} | '
+            f'Wall-clock: {self._result["wall_time"]} seconds | '
+            f'Solver info: "{self._result["solver_info"]}" ...')
 
         return self._result
 
@@ -497,8 +497,8 @@ class CMAES:
 @njit(fastmath=True)
 def _tell(
     fitness, steps, weights, left_basis, core_vector, path_sigma, path_cov,
-    mean, sigma, cov, lr_sigma, lr_cov, lr_mean, lr_rank_1, lr_rank_mu,
-    mu_eff, damp_sigma, expected_path_length, opt_iter, elite_size, rank):
+    mean, sigma, cov, lr_sigma, lr_cov, lr_mean, lr_rank_one, lr_rank_mu,
+    mu_eff, damp_sigma, expected_path_length, opt_iter, elite_size):
     """Update the basic CMAES variables."""
 
     # Get the indices of the elite fitness values
@@ -507,30 +507,14 @@ def _tell(
     # Get the number of variables
     number_of_variables = mean.shape[0]
 
-    # Initialize the elite mean step
-    elite_mean_step = zeros(number_of_variables)
-
-    # Loop over the elite size
-    for elite_idx in range(elite_size):
-
-        # Get the sample index
-        sample_index = elite_indices[elite_idx]
-
-        # Get the associated weight
-        weight = weights[elite_idx]
-
-        # Loop over the number of variables
-        for var_idx in range(number_of_variables):
-
-            # Update the elite mean step element
-            elite_mean_step[var_idx] += weight * steps[sample_index, var_idx]
+    elite_weights = weights[:elite_size].reshape(-1, 1)
+    elite_mean_step = nsum(steps[elite_indices] * elite_weights, axis=0)
 
     # Calculate the inverse rooted eigenvalues
     inv_root_core_vec = 1.0 / (sqrt(core_vector) + 1e-15)
 
     # Transform the elite mean step
-    latent_basis_t = ascontiguousarray(left_basis.T)
-    latent_step = latent_basis_t @ elite_mean_step
+    latent_step = left_basis.T @ elite_mean_step
     elite_mean_step_tr = left_basis @ (inv_root_core_vec * latent_step)
 
     # Update the step-size evolution path
@@ -546,7 +530,7 @@ def _tell(
     update_switch = (
         1.0
         if ps_norm / sqrt(1 - (1-lr_sigma)**(2*(opt_iter + 1)))
-        < (1.4 + 2/(rank+1)) * expected_path_length
+        < (1.4 + 2/(number_of_variables+1)) * expected_path_length
         else 0.0)
 
     # Compute the 'keep' term of the evolution path
@@ -555,11 +539,8 @@ def _tell(
     # Precompute the coefficient
     coeff = update_switch * sqrt(lr_cov * (2.0 - lr_cov) * mu_eff)
 
-    # Loop over the number of variables
-    for var_idx in range(number_of_variables):
-
-        # Update the evolution path element
-        path_cov[var_idx, 0] += coeff * elite_mean_step[var_idx]
+    # Update the evolution path element
+    path_cov[:, 0] += coeff * elite_mean_step
 
     # Update the mean
     mean += (lr_mean * sigma) * elite_mean_step
@@ -574,160 +555,18 @@ def _tell(
         # Clip to 1e-15
         sigma_update = 1e-15
 
-    # Else, check if the updated sigma is above 1.0
-    elif sigma_update > 1.0:
-
-        # Clip to 1.0
-        sigma_update = 1.0
-
     # Get the adjusted rank-1 learning rate
-    lr_rank_1_adj = (1.0-update_switch) * lr_rank_1 * lr_cov * (2.0-lr_cov)
+    lr_rank_one_adj = (1.0-update_switch) * lr_rank_one * lr_cov * (2.0-lr_cov)
 
     # Get the elite steps
     elite_steps = steps[elite_indices]
 
-    # Initialize the weighted elite steps
-    weighted_elite_steps = zeros(elite_steps.shape)
-
-    # Loop over the elite size
-    for elite_idx in range(elite_size):
-
-        # Enter the weighted elite steps element
-        weighted_elite_steps[elite_idx] = (
-            weights[elite_idx] * elite_steps[elite_idx])
-
     # Compute the rank-mu update
-    rank_mu_term = elite_steps.T @ weighted_elite_steps
+    rank_mu_term = (elite_steps.T * weights[:elite_size]) @ elite_steps
 
     # Update the covariance matrix
-    cov *= (1 - lr_rank_1 - lr_rank_mu + lr_rank_1_adj)
-    cov += lr_rank_1 * (path_cov @ path_cov.T)
+    cov *= (1 - lr_rank_one - lr_rank_mu + lr_rank_one_adj)
+    cov += lr_rank_one * (path_cov @ path_cov.T)
     cov += lr_rank_mu * rank_mu_term
 
     return sigma_update
-
-# %% Plot covariance matrix over function
-
-# import numpy as np
-# import matplotlib
-# matplotlib.use('Qt5Agg')
-# import matplotlib.pyplot as plt
-
-# def plot_iter_sv(svals, iteration, fname, k):
-#     """Plot the singular values for a fixed iteration."""
-
-#     # Plotting on a semi-log scale (y-axis is logarithmic)
-#     plt.figure(figsize=(10, 6))
-
-#     #
-#     values = svals[iteration][:k]
-
-#     # Plot the singular values
-#     plt.semilogy(values, marker='o', linestyle='-', color='b')
-
-#     plt.title(f'{fname} (iteration {iteration})', fontweight='bold')
-#     plt.ylabel('Singular Value ($\sigma_i$) (log scale)')
-#     plt.xlabel('Singular Value Index')
-#     # plt.xticks([i for i in range(len(values))])
-#     plt.grid(True, which="both", ls="--", color='0.7')
-#     plt.savefig(f'/home/tim/Downloads/{fname}_{iteration}.pdf')
-#     plt.show()
-
-# plot_iter_sv(sv, 0, prob.name, 20)
-# plot_iter_sv(sv, len(sv)//2, prob.name, 20)
-# plot_iter_sv(sv, len(sv)-1, prob.name, 20)
-
-# def plot_sv_paths(svals, fname, space):
-#     """Plot the iteration-wise singular value paths."""
-
-#     # Plotting on a semi-log scale (y-axis is logarithmic)
-#     plt.figure(figsize=(10, 6))
-
-#     # Plot the singular values
-#     for values in zip(*svals):
-
-#         #
-#         subvalues = values[::space]
-
-#         #
-#         plt.semilogy(
-#             array(range(len(subvalues)))*space, subvalues, marker='.',
-#             linestyle='-', color='b')
-
-#     plt.title(f'{fname}', fontweight='bold')
-#     plt.ylabel('Singular Value ($\sigma_i$) (log scale)')
-#     plt.xlabel('Optimization iteration')
-#     plt.grid(True, which="both", ls="--", color='0.7')
-#     plt.savefig(f'/home/tim/Downloads/{fname}.pdf')
-#     plt.show()
-
-# plot_sv_paths(sv, prob.name, 1)
-
-# # Interactive plotting
-# plt.ion()
-
-# # Create plot
-# fig = plt.figure(figsize=(10, 8))
-# ax = fig.add_subplot(111, projection='3d')
-# ax.view_init(elev=30, azim=-45)
-
-# def update_plot(iteration, mu_2d, cov_2d, svs):
-
-#     # Clear the axis
-#     ax.clear()
-
-#     # Create meshgrid
-#     x_range = np.linspace(-5, 5, 50)
-#     y_range = np.linspace(-5, 5, 50)
-#     X, Y = np.meshgrid(x_range, y_range)
-
-#     # Plot function as surface
-#     Z = prob.f(array([X, Y]))
-#     ax.plot_surface(
-#         X, Y, Z, cmap='viridis', alpha=0.3, antialiased=True, zorder=5)
-
-#     # Plot mean vector
-#     mu_z = prob.f(array([mu_2d[0], mu_2d[1]]))
-#     ax.text(mu_2d[0], mu_2d[1], mu_z, "●", color='orange', fontsize=14,
-#             ha='center', va='center', zorder=100)
-
-#     # Compute the circle
-#     vals, vecs = np.linalg.eig(cov_2d)
-#     t = np.linspace(0, 2*np.pi, 100)
-#     circle = np.stack([np.cos(t), np.sin(t)])
-
-#     # Transform into ellipsoid
-#     scaling = 3 * np.sqrt(np.maximum(vals, 0))
-#     ellipse_points = (vecs @ (scaling[:, None] * circle))
-
-#     # Compute the center of the ellipsoid
-#     ell_x = ellipse_points[0, :] + mu_2d[0]
-#     ell_y = ellipse_points[1, :] + mu_2d[1]
-
-#     # Compute the z-level of the ellipsoid
-#     ell_z = [mu_z]*100
-
-#     # Plot covariance matrix
-#     ax.plot(
-#         ell_x, ell_y, ell_z, color='red', linewidth=3, label="3σ ellipse",
-#         zorder=5)
-
-#     # Add the mean and singular values
-#     s_vals = np.sqrt(np.maximum(vals, 0))
-#     label_txt = (
-#         f"mean: {(round(float(mu_2d[0]), 4), round(float(mu_2d[1]), 4))}"
-#         f"\nλ1: {s_vals[0]:.2f}\nλ2: {s_vals[1]:.2f}")
-#     ax.text(
-#         mu_2d[0], mu_2d[1], mu_z+10,
-#         label_txt, zorder=10,
-#         bbox=dict(
-#             facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'))
-
-#     ax.set_xlabel('X'); ax.set_ylabel('Y'); ax.set_zlabel('Z')
-#     ax.set_title(f"Iteration: {iteration+1}")
-#     plt.draw()
-#     plt.pause(3)
-#     plt.show()
-
-# plt.pause(10)
-# plt.close()

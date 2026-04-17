@@ -9,9 +9,9 @@ matrix adaptation evolutionary algorithms.
 
 # Author: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
-from seamaze.optimizers import evolutionary
-from seamaze.optimizers import low_rank
+from seamaze.optimizers.evolutionary._cmaes import CMAES
+from seamaze.optimizers.low_rank._dlrcmaes import DLRCMAES
 
 __all__ = [
-    'evolutionary',
-    'low_rank']
+    'CMAES',
+    'DLRCMAES']

@@ -102,7 +102,7 @@ To cite *seamaze*, either use the link in the right sidebar of the Github landin
 @software{seamaze,
   title = {{seamaze}: a python library for classical and dynamical low-rank CMA-ES},
   author = {Ortkamp, Tim and Patwardhan, Chinmay and Stammer, Pia},
-  version = {0.0.2},
+  version = {0.0.3},
   license = {MIT},
   year = {2026},
   publisher = {GitHub},

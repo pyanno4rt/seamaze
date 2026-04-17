@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "seamaze"
-version = "0.0.2"
+version = "0.0.3"
 description = "A python library for classical and dynamical low-rank CMA-ES."
 license = "MIT"
 authors = [ "Tim Ortkamp <tim.ortkamp@gmx.de>" ]
@@ -41,7 +41,6 @@ seaborn = ">=0.13.2"
 pytest = ">=9.0.3"
 pytest-cov = ">=7.1.0"
 coveralls = ">=4.1.0"
-
 
 [tool.poetry.group.dev-local.dependencies]
 spyder = ">=6.1.4"

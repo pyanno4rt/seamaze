@@ -22,6 +22,7 @@ from scipy.linalg import eigh
 
 # %% Internal package import
 
+from seamaze.logging import Logging
 from seamaze.optimizers.low_rank import LowRankIntegrator
 from seamaze.utils import make_compat
 
@@ -109,6 +110,9 @@ class DLRCMAES:
         dictionary with the current results.
     """
 
+    # Initialize the logger
+    logger = Logging('DLR-CMA-ES', 'info')
+
     def __init__(
             self,
             number_of_variables,
@@ -131,6 +135,10 @@ class DLRCMAES:
             update_interval=1,
             callback=None):
 
+        # Log a message about the initialization
+        self.logger.info(
+            f'Initializing DLR-CMA-ES with "{low_rank_integrator}"...')
+
         # Set the random seed
         self._rng = default_rng(42)
 
@@ -147,7 +155,7 @@ class DLRCMAES:
 
         # Determine the integrator rank
         rank = min(
-            max(1, low_rank_dimension or number_of_variables // 10),
+            max(1, low_rank_dimension or number_of_variables),
             number_of_variables)
 
         # Initialize the dynamical low-rank integrator
@@ -662,11 +670,28 @@ class DLRCMAES:
                 # Pass the current results to the callback
                 self._callback(self._result)
 
+            # Log a message about the current result
+            self.logger.info(
+                f'Iteration {self._opt_iter}: '
+                f'f={round(self._result["optimal_value"], 6)}')
+
             # Increment the iteration counter
             self._opt_iter += 1
 
         # Store the runtimes
         self._result['wall_time'] = time()-self._wall_start
+
+        # Log a message about the final result
+        short_sol = (
+            str(self._result["optimal_point"][:5]).replace("\n", "")[:-1]
+            + " ...]")
+        self.logger.info(
+            'Optimization finished | '
+            f'Best value: {round(self._result["optimal_value"], 6)} | '
+            f'Best solution: {short_sol} | '
+            f'Iterations: {self._opt_iter} | '
+            f'Wall-clock: {self._result["wall_time"]} seconds | '
+            f'Solver info: "{self._result["solver_info"]}" ...')
 
         return self._result
 

@@ -14,10 +14,11 @@ information, constraints, and robust restart mechanisms.
 
 # Author: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
-from seamaze import benchmarks, optimizers, plotting, utils
+from seamaze import benchmarks, diagnostics, optimizers, plotting, utils
 
 __all__ = [
     'benchmarks',
+    'diagnostics',
     'optimizers',
     'plotting',
     'utils']

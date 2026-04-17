@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 title: "seamaze: a python library for classical and dynamical low-rank CMA-ES"
 message: "If you use seamaze in your work, let us now and cite this repository as below."
-version: 0.0.1
+version: 0.0.3
 type: software
 authors:
   - given-names: "Tim"
