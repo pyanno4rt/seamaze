@@ -19,13 +19,13 @@
   </picture>
 </p>
 
-<h3 align='center'>A Python Library for Classical and Dynamical Low-Rank CMA-ES</h3>
+<h3 align='center'>A Python Library for Classical, Limited-Memory, and Dynamical Low-Rank CMA-ES</h3>
 
 ---
 
 # General :earth_americas:
 
-*seamaze* is a Python library for classical and Dynamical Low-Rank (DLR) CMA-ES variants. It is designed to navigate complex, high-dimensional fitness landscapes by iteratively adapting a multivariate Gaussian search space to the objective's local topography. By leveraging DLR approximations, seamaze remains computationally efficient even on ill-conditioned or rugged black-box problems. This implementation further extends to the integration of first-order information, constraints, and robust restart mechanisms.
+*seamaze* is a Python library for classical, limited-memory and Dynamical Low-Rank (DLR) variants of the Covariance Matrix Adaptation Evolution Strategy (CMA-ES). It provides state-of-the-art, derivative-free algorithms designed for continuous, non-linear, and non-convex real-parameter optimization, excelling in ill-conditioned, non-separable, or rugged fitness landscapes. By leveraging limited-memory and DLR approximations, *seamaze* maintains computational efficiency even on high-dimensional black-box problems. This implementation further incorporates first-order information, constraint handling, and multi-stage restart mechanisms.
 
 # Installation :computer:
 
@@ -47,12 +47,18 @@ git clone https://github.com/pyanno4rt/seamaze.git
 
 ### Usage
 
-*seamaze* has two main classes which provide a classical and a dynamical low-rank CMA-ES variant:
+*seamaze* has three main classes which provide a classical, a limited-memory, and a dynamical low-rank CMA-ES variant:
 
 ###### Classical CMA-ES
 
 ```python
 from seamaze.optimizers.evolutionary import CMAES
+```
+
+###### Limited-memory CMA-ES
+
+```python
+from seamaze.optimizers.evolutionary import LMCMAES
 ```
 
 ###### Dynamical low-rank CMA-ES
@@ -68,8 +74,8 @@ from seamaze.optimizers.low_rank import DLRCMAES
 | `python`                       | <font size="3"> >=3.11, <4.0 </font>  |
 | `numpy`                        | <font size="3"> >=2.4.4 </font>       |
 | `scipy`                        | <font size="3"> >=1.17.1 </font>      |
-| `numba`                        | <font size="3"> >=0.65.0 </font>      |
-| `matplotlib`                   | <font size="3"> >=3.10.8 </font>      |
+| `numba`                        | <font size="3"> >=0.65.1 </font>      |
+| `matplotlib`                   | <font size="3"> >=3.10.9 </font>      |
 | `seaborn`                      | <font size="3"> >=0.13.2 </font>      |
 
 # Development :rocket:
@@ -100,7 +106,7 @@ To cite *seamaze*, either use the link in the right sidebar of the Github landin
 
 ```tex
 @software{seamaze,
-  title = {{seamaze}: a python library for classical and dynamical low-rank CMA-ES},
+  title = {{seamaze}: a python library for classical, limited-memory, and dynamical low-rank CMA-ES},
   author = {Ortkamp, Tim and Patwardhan, Chinmay and Stammer, Pia},
   version = {0.0.3},
   license = {MIT},

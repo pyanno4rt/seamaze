@@ -1,10 +1,10 @@
-"""CMA-ES monitor."""
+"""DLR-CMA-ES monitor."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
-from numpy import mean
+from numpy import diag, mean
 from numpy.linalg import norm
 
 # %% Internal package import
@@ -14,12 +14,12 @@ from seamaze.plotting import Visualizer2D
 # %% Class definition
 
 
-class MonitorCMAES:
+class MonitorDLRCMAES:
     """
-    CMA-ES monitor class.
+    DLR-CMA-ES monitor class.
 
     This class implements a monitoring system for tracking optimization \
-    parameters of CMA-ES.
+    parameters of DLR-CMA-ES.
 
     Parameters
     ----------
@@ -137,8 +137,8 @@ class MonitorCMAES:
         Parameters
         ----------
         solver : object of class \
-            :class:`~seamaze.optimizers.evolutionary._cmaes.CMAES`
-            The object used to represent the CMA-ES algorithm.
+            :class:`~seamaze.optimizers.low_rank._dlrcmaes.DLRCMAES`
+            The object used to represent the DLR-CMA-ES algorithm.
         """
 
         # Increment the counter
@@ -167,6 +167,7 @@ class MonitorCMAES:
                     solver.lower_variable_bounds,
                     solver.upper_variable_bounds
                     ),
+                # integrator variables ..
                 'max_iter': solver.maximum_iterations,
                 'max_time': solver.maximum_wall_time,
                 'fitness_threshold': solver.fitness_threshold,
@@ -202,7 +203,7 @@ class MonitorCMAES:
                 self._visualizer.update(
                     iteration=solver._opt_iter,
                     mean=solver._mean,
-                    cov=solver._cov,
+                    cov=solver._root_cov@solver._root_cov.T,
                     sigma=solver._sigma,
                     fitness=solver._result['optimal_value'].item(),
                     delay=self.delay)
@@ -216,6 +217,9 @@ class MonitorCMAES:
             self._record('best_fitness', min(solver._fitness))
             self._record('mean_fitness', mean(solver._fitness))
             self._record('worst_fitness', max(solver._fitness))
+
+            # Record the integrator rank
+            self._record('int_rank', solver.integrator.rank)
 
     def full(
             self,
@@ -246,12 +250,13 @@ class MonitorCMAES:
             self._last_mean = solver._mean.copy()
 
             # Record the singular values
-            svs = solver._core_vector
+            svs = diag(solver._core_matrix)
             self._record('cov_svs', svs)
 
             # Record the covariance metrics
             max_sv, min_sv = max(svs), min(svs)
-            self._record('cov_norm', norm(solver._cov, ord=2).item())
+            cov = solver._root_cov@solver._root_cov.T
+            self._record('cov_norm', norm(cov, ord=2).item())
             self._record('cov_cn', (max_sv / (min_sv + 1e-12)).item())
             self._record('cov_spectr_norm', max_sv.item())
 

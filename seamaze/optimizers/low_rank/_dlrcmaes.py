@@ -13,9 +13,9 @@ from collections import deque
 from math import inf
 from numba import njit
 from numpy import (
-    add, arange, argmin, argsort, array, ascontiguousarray, clip, copyto,
-    empty, exp, eye, fill_diagonal, float64, full, log, matmul, maximum,
-    median, multiply, ones, sqrt, take, zeros)
+    add, arange, argmin, argsort, array, clip, copyto, empty, exp, eye,
+    fill_diagonal, float64, full, log, matmul, maximum, median, multiply, ones,
+    sqrt, take, zeros)
 from numpy import sum as nsum
 from numpy.random import default_rng
 from scipy.linalg import eigh
@@ -106,8 +106,8 @@ class DLRCMAES:
         high-dimensional problems.
 
     callback : Callable[[dict], None], default=None
-        Optional function called at the end of each iteration. Must accept a \
-        dictionary with the current results.
+        Optional function called at the end of each iteration. Must accept \
+        the solver instance.
     """
 
     # Initialize the logger
@@ -122,7 +122,7 @@ class DLRCMAES:
             upper_variable_bounds=None,
             number_of_individuals=None,
             initial_sigma=0.3,
-            low_rank_integrator='fixedsymmetricBUG',
+            low_rank_integrator='fixedSPDBUG',
             low_rank_dimension=None,
             low_rank_tolerance_rel=1e-2,
             low_rank_tolerance_abs=1e-8,
@@ -242,6 +242,7 @@ class DLRCMAES:
         self.fitness_threshold = fitness_threshold
         self.sigma_threshold = sigma_threshold or 0.0
         self.tolerance = tolerance
+        self._fitness = None
         self._fitness_history = deque(maxlen=fitness_window_size)
         self._callback = callback
         self._result = {
@@ -348,7 +349,7 @@ class DLRCMAES:
         elite_projection = self._elite_projection[:, :core_rank]
 
         # Add the rank-1 update
-        core_matrix += self._lr_rank_1 * (path_cov_padded @ path_cov_padded.T)
+        core_matrix += self._lr_rank_one * (path_cov_padded @ path_cov_padded.T)
 
         # Add the rank-mu update
         core_matrix += self._lr_rank_mu * (
@@ -386,7 +387,7 @@ class DLRCMAES:
             )
 
         # Add the rank-1 update
-        target_matrix += self._lr_rank_1 * (self._path_full @ (
+        target_matrix += self._lr_rank_one * (self._path_full @ (
             self._path_full.T @ projection_matrix))
 
         # Compute the weighted elite steps
@@ -609,7 +610,7 @@ class DLRCMAES:
         # Update the learning rates
         self._lr_sigma = (self._mu_eff + 2) / (rank + self._mu_eff + 3)
         self._lr_cov = 4 / (rank + 4)
-        self._lr_rank_1 = 100*(
+        self._lr_rank_one = 100*(
             2 * min(1, self._pop_size / 6) / ((rank + 1.3)**2 + self._mu_eff))
         self._lr_rank_mu = (
             2 * (self._mu_eff + 1/self._mu_eff - 2) /
@@ -652,31 +653,39 @@ class DLRCMAES:
             # Set the initial mean
             self._mean = initial_mean.astype(float)
 
-        # Continue until termination criteria are fulfilled
-        while self.check_termination() is False:
+        try:
 
-            # "Ask" for a new population
-            self.ask()
+            # Continue until termination criteria are fulfilled
+            while self.check_termination() is False:
 
-            # Evaluate the population's fitness
-            fitness = self.evaluate()
+                # "Ask" for a new population
+                self.ask()
 
-            # "Tell" the algorithm to update its parameters
-            self.tell(fitness)
+                # Evaluate the population's fitness
+                self._fitness = self.evaluate()
 
-            # Check if a callback has been provided
-            if self._callback is not None:
+                # "Tell" the algorithm to update its parameters
+                self.tell(self._fitness)
 
-                # Pass the current results to the callback
-                self._callback(self._result)
+                # Check if a callback has been provided
+                if self._callback is not None:
 
-            # Log a message about the current result
-            self.logger.info(
-                f'Iteration {self._opt_iter}: '
-                f'f={round(self._result["optimal_value"], 6)}')
+                    # Pass the current results to the callback
+                    self._callback(self)
 
-            # Increment the iteration counter
-            self._opt_iter += 1
+                # Log a message about the current result
+                self.logger.info(
+                    f'Iteration {self._opt_iter}: '
+                    f'f={round(self._result["optimal_value"], 6)}')
+
+                # Increment the iteration counter
+                self._opt_iter += 1
+
+        except KeyboardInterrupt:
+
+            # Log a message about the user stopping
+            self.logger.warning("Optimization interrupted by user ...")
+            self._result['solver_info'] = 'STOPPED_BY_USER'
 
         # Store the runtimes
         self._result['wall_time'] = time()-self._wall_start
@@ -797,8 +806,7 @@ def _tell(
     inv_root_ev = 1.0 / (sqrt(ev) + 1e-15)
 
     # Transform the elite mean step
-    latent_basis_t = ascontiguousarray(left_basis.T)
-    latent_mean_step = latent_basis_t @ elite_mean_step
+    latent_mean_step = left_basis.T @ elite_mean_step
     eq_step = eq.T @ latent_mean_step
     latent_step_whitened = eq @ (inv_root_ev * eq_step)
 

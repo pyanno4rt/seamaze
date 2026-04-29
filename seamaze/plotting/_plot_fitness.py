@@ -108,8 +108,13 @@ def plot_fitness(
         # Save the figure
         plt.savefig(save_path, bbox_inches='tight', dpi=300, transparent=True)
 
-    # Show the figure
-    plt.show(block=True)
+        # Close the figure
+        plt.close()
 
-    # Close the figure
-    plt.close()
+    else:
+
+        # Show the figure
+        plt.show(block=True)
+
+        # Close the figure
+        plt.close()

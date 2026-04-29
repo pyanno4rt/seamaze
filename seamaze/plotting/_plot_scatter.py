@@ -1,4 +1,4 @@
-"""Matrix slices plotting."""
+"""Scatter plotting."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
@@ -9,23 +9,22 @@ import matplotlib.pyplot as plt
 # %% Plotting function
 
 
-def plot_matrix_slices(
-        matrix, axis=0, step=1, semilog=False, title='', xlabel='', ylabel='',
+def plot_scatter(
+        x, y, head=None, semilog=False, title='', xlabel='', ylabel='',
         save_path=None):
     """
-    Plot 1-D matrix slices.
+    Plot scatter points.
 
     Parameters
     ----------
-    matrix : ndarray
-        The 2D input matrix.
+    x : ndarray
+        The 1D array with x-coordinates.
 
-    axis : {0, 1}, default=0
-        The axis along which the matrix is sliced. If 0, the function \
-        iterates over the columns, else over the rows.
+    y : ndarray
+        The 1D array with y-coordinates.
 
-    step : int, default=1
-        The sampling interval for data points within the slice.
+    head : None or int, default=None
+        The number of initial data points to plot.
 
     semilog : bool, default=False
         The indicator for logarithmic scaling (base 10) on the y-axis.
@@ -61,33 +60,28 @@ def plot_matrix_slices(
     # Create the figure
     _, ax = plt.subplots(figsize=(8, 6))
 
-    # Transpose the matrix if row-wise slicing should be applied
-    matrix = matrix.T if axis == 0 else matrix
+    # Get the coordinates
+    coordinates = list(zip(x, y))
 
-    # Generate the color set
-    colors = plt.cm.viridis(range(0, 256, max(1, 256 // len(matrix))))
+    # Truncate the series
+    coordinates = coordinates[:head] if head is not None else coordinates
 
-    # Loop over the matrix slices
-    for index, mslice in enumerate(matrix):
+    # Define the marker style and line width
+    marker_style = '.' if len(coordinates) < 50 else None
 
-        # Select values from the slice
-        series = mslice[::step]
+    # Unpack the coordinates
+    x, y = zip(*coordinates)
 
-        # Get the index set
-        indices = range(0, len(mslice), step)
+    # Plot the series
+    plt.scatter(
+        x=x, y=y, s=3, c='b', marker=marker_style, linestyle='-', alpha=0.8
+        )
 
-        # Define the marker style and line width
-        marker_style = '.' if len(series) < 50 else None
-        line_width = 0.75
+    # Check if a semilog plot should be generated
+    if semilog:
 
-        # Get the plot function
-        plot_func = ax.semilogy if semilog else ax.plot
-
-        # Plot the line
-        plot_func(
-            indices, series, marker=marker_style, markersize=3,
-            linestyle='-', linewidth=line_width, alpha=0.8, color=colors[index]
-            )
+        # Logarithmize the y-axis
+        plt.yscale('log')
 
     # Check if a title has been provided
     if title:

@@ -9,7 +9,6 @@ from numpy import (
 from numpy import sum as nsum
 from numpy.linalg import pinv, svd, trace
 from scipy.linalg import qr
-from scipy.sparse import identity
 
 # %% Dynamical low-rank integrator class
 
@@ -150,7 +149,7 @@ class LowRankIntegrator:
         # Initialize psi
         self._psi = zeros(
             (number_of_variables, number_of_variables), dtype=float64)
-        
+
         # Initialize s
         self._s = 0.0
 
@@ -390,12 +389,12 @@ class LowRankIntegrator:
         U_proj = Id - U @ U.T
         U_proj_had = U_proj * U_proj
         U_proj_had_pinv = pinv(U_proj_had)
-        
-        
+
+
         Y = K_slice @ U.T
         F = self.K_step(Y, Id, dt)
         F -= K_slice
-        
+
         d_psi = U_proj_had_pinv @ diag(U_proj @ F @ U_proj) # Add F here
 
         #
@@ -420,7 +419,7 @@ class LowRankIntegrator:
             Uhat_slice, ext_S, Uhat_slice, None, None, None, dt)
 
         Shat -= dt * (Uhat_slice.T @ diag(d_psi) @ Uhat_slice)
-       
+
         #
         Shat += Shat.T
         Shat *= 0.5
@@ -450,17 +449,17 @@ class LowRankIntegrator:
         K_slice = self._K[:, :rank]
         Uhat_slice = self._Uhat[:, :rank]
         Id = eye(U.shape[0])
-        
+
         matmul(U, S, out=K_slice)
-        
+
         # Evaluate F from the RHS
         Y =K_slice @ U.T
         F = self.K_step(Y, Id, dt)
         F -= K_slice
-        
+
         d_s = (trace(F) - trace(U.T @ F @ U)) / (d - rank)
 
-        
+
 
         K_slice -= s * U
 
@@ -665,7 +664,7 @@ class LowRankIntegrator:
         U_proj = Id - U @ U.T
         U_proj_had = U_proj * U_proj
         U_proj_had_pinv = pinv(U_proj_had)
-        
+
         Y = K_slice @ U.T
         F = self.K_step(Y, Id, dt)
         F -= K_slice
@@ -727,7 +726,7 @@ class LowRankIntegrator:
 
         #
         matmul(U, S, out=K_slice)
-        
+
         Y = K_slice @ U.T
         F = self.K_step(Y, Id, dt)
         F -= K_slice
@@ -934,4 +933,3 @@ class LowRankIntegrator:
         # self.rank_history.append(self.rank)
 
         # return U, S, V
-

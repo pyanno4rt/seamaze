@@ -16,31 +16,32 @@ from seamaze.plotting import plot_results
 # %% Sphere
 
 # Initialize the problem
-sphere = Sphere(2)
+sphere = Sphere(100)
 
 # Initialize the monitor
-monitor = MonitorCMAES(interval=1, mode='interactive', delay=3)
+monitor = MonitorCMAES(interval=1, mode='interactive', delay=0.001)
 
 # Initialize the CMA-ES solver
-solver_sphere = CMAES(
+solver = CMAES(
     number_of_variables=sphere.ndim,
     objective=sphere.__call__,
     gradient=sphere.gradient,
     lower_variable_bounds=array(sphere.bounds[0]),
     upper_variable_bounds=array(sphere.bounds[1]),
-    number_of_individuals=2000,
-    initial_sigma=2.0,
-    maximum_iterations=2000,
+    number_of_individuals=1000,
+    initial_sigma=0.3,
+    maximum_iterations=1000,
     maximum_wall_time=7200,
     fitness_threshold=None,
     fitness_window_size=30,
     tolerance=1e-6,
     sigma_threshold=1e-3,
     update_interval=1,  # Update every iteration
-    callback=monitor.full)  # Enable full monitoring
+    callback=monitor.full  # Enable full monitoring
+    )
 
 # Optimize the decision variables
-result_sphere = solver_sphere.optimize(array([5]*sphere.ndim))
+result = solver.optimize(array([5]*sphere.ndim))
 
 # Plot the results
 plot_results(
@@ -56,4 +57,5 @@ plot_results(
     show_cov_norm=True,
     show_cov_cn=True,
     show_cov_spectr_norm=True,
-    save_path=None)
+    save_folder=None
+    )

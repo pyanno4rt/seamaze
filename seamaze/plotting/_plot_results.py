@@ -4,11 +4,16 @@
 
 # %% Internal package import
 
-from numpy import array
+from os import makedirs
+from os.path import exists
+
+from datetime import datetime
+from numpy import arange, array
 
 # %% Internal package import
 
-from seamaze.plotting import plot_fitness, plot_matrix_slices, plot_series
+from seamaze.plotting import (
+    plot_fitness, plot_matrix_slices, plot_scatter, plot_series)
 
 # %% Plotting function
 
@@ -18,7 +23,7 @@ def plot_results(
         show_step_size=True, show_mean_change_norm=True,
         show_sigma_path_norm=True, show_cov_path_norm=True, show_cov_svs=True,
         show_cov_norm=True, show_cov_cn=True, show_cov_spectr_norm=True,
-        save_path=None):
+        show_integrator_rank=True, save_folder=None):
     """
     Plot the optimization results.
 
@@ -28,7 +33,7 @@ def plot_results(
         Dictionary with the tracked parameters.
 
     label : str
-        Sublabel for the plot titles.
+        Sublabel for the plot titles and stored files.
 
     show_objective : bool, default=True
         The indicator for plotting the objective values.
@@ -60,9 +65,37 @@ def plot_results(
     show_cov_spectr_norm : bool, default=True
         The indicator for plotting the covariance spectral norm.
 
-    save_path : None or str, default=None
-        The file path where the figure should be saved.
+    show_integrator_rank : bool, default=True
+        The indicator for plotting the rank of the integrator.
+
+    save_folder : None or str, default=None
+        The folder path where the figure(s) should be saved.
     """
+
+    def get_path(suffix):
+        """Get the save path."""
+
+        return prefix + suffix if prefix else None
+
+    # Check if the files should be saved
+    if save_folder:
+
+        # Generate the prefix
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        prefix = (
+            f'{save_folder}/{date_str}_{label}_'
+            if save_folder else f'{date_str}_{label}_')
+
+        # Check if the folder does not yet exist
+        if not exists(save_folder):
+
+            # Create a new folder
+            makedirs(save_folder)
+
+    else:
+
+        # Set the prefix to None
+        prefix = None
 
     # Check if the objective values should be plotted
     if show_objective and 'optimal_value' in data:
@@ -75,7 +108,7 @@ def plot_results(
             title=f'Objective value ({label})',
             xlabel='Generation',
             ylabel='Value',
-            save_path=save_path)
+            save_path=get_path('optimal_value.pdf'))
 
     # Check if the fitness values should be plotted
     if show_fitness and all(key in data for key in (
@@ -91,7 +124,7 @@ def plot_results(
             title=f'Fitness ({label})',
             xlabel='Generation',
             ylabel='Value',
-            save_path=save_path)
+            save_path=get_path('fitness.pdf'))
 
     # Check if the step size should be plotted
     if show_step_size and 'sigma' in data:
@@ -104,7 +137,7 @@ def plot_results(
             title=f'Step size ({label})',
             xlabel='Generation',
             ylabel='Value',
-            save_path=save_path)
+            save_path=get_path('sigma.pdf'))
 
     # Check if the mean change norm should be plotted
     if show_mean_change_norm and 'mean_change_norm' in data:
@@ -117,7 +150,7 @@ def plot_results(
             title=f'Mean change norm ({label})',
             xlabel='Generation',
             ylabel='Value',
-            save_path=save_path)
+            save_path=get_path('mean_change_norm.pdf'))
 
     # Check if the sigma path norm should be plotted
     if show_sigma_path_norm and 'path_sigma_norm' in data:
@@ -130,7 +163,7 @@ def plot_results(
             title=fr'$p_{{\sigma}}$-norm ({label})',
             xlabel='Generation',
             ylabel='Value',
-            save_path=save_path)
+            save_path=get_path('path_sigma_norm.pdf'))
 
     # Check if the covariance path norm should be plotted
     if show_cov_path_norm and 'path_cov_norm' in data:
@@ -143,10 +176,50 @@ def plot_results(
             title=fr'$p_{{cov}}$-norm ({label})',
             xlabel='Generation',
             ylabel='Value',
-            save_path=save_path)
+            save_path=get_path('path_cov_norm.pdf'))
 
-    # Check if the covariance singular value paths should be plotted
+    # Check if the covariance singular values should be plotted
     if show_cov_svs and 'cov_svs' in data:
+
+        # Get the number of generations
+        number_of_generations = len(data['cov_svs'])
+
+        # Plot the singular values at start
+        plot_scatter(
+            x=arange(len(data['cov_svs'][0])),
+            y=sorted(data['cov_svs'][0], reverse=True),
+            head=None,
+            semilog=True,
+            title=f'Singular values at iteration 1 ({label})',
+            xlabel='Index',
+            ylabel='Singular value (log scale)',
+            save_path=get_path('cov_svs_start.pdf'))
+
+        # Plot the singular values at mid
+        plot_scatter(
+            x=arange(len(data['cov_svs'][number_of_generations // 2])),
+            y=sorted(data['cov_svs'][number_of_generations // 2], reverse=True),
+            head=None,
+            semilog=True,
+            title=(
+                'Singular values at iteration '
+                f'{number_of_generations // 2 + 1} ({label})'),
+            xlabel='Index',
+            ylabel='Singular value (log scale)',
+            save_path=get_path('cov_svs_mid.pdf'))
+
+        # Plot the singular values at end
+        plot_scatter(
+            x=arange(len(data['cov_svs'][-1])),
+            y=sorted(data['cov_svs'][-1], reverse=True),
+            head=None,
+            semilog=True,
+            title=(
+                f'Singular values at iteration {number_of_generations + 1} '
+                f'({label})'),
+            xlabel='Index',
+            ylabel='Singular value (log scale)',
+            save_path=get_path('cov_svs_end.pdf'))
 
         # Plot the covariance singular value paths
         plot_matrix_slices(
@@ -157,7 +230,7 @@ def plot_results(
             title=f'Covariance singular values ({label})',
             xlabel='Generation',
             ylabel='Value (log scale)',
-            save_path=save_path)
+            save_path=get_path('cov_svs.pdf'))
 
     # Check if the covariance norm should be plotted
     if show_cov_norm and 'cov_norm' in data:
@@ -170,7 +243,7 @@ def plot_results(
             title=f'Covariance norm ({label})',
             xlabel='Generation',
             ylabel='Value',
-            save_path=save_path)
+            save_path=get_path('cov_norm.pdf'))
 
     # Check if the covariance condition number should be plotted
     if show_cov_cn and 'cov_cn' in data:
@@ -183,7 +256,7 @@ def plot_results(
             title=f'Covariance condition number ({label})',
             xlabel='Generation',
             ylabel='Value',
-            save_path=save_path)
+            save_path=get_path('cov_cn.pdf'))
 
     # Check if the covariance spectral norm should be plotted
     if show_cov_spectr_norm and 'cov_spectr_norm' in data:
@@ -196,4 +269,17 @@ def plot_results(
             title=f'Covariance spectral norm ({label})',
             xlabel='Generation',
             ylabel='Value',
-            save_path=save_path)
+            save_path=get_path('cov_spectr_norm.pdf'))
+
+    # Check if the rank of the integrator should be plotted
+    if show_integrator_rank and 'int_rank' in data:
+
+        # Plot the integrator rank evolution
+        plot_series(
+            series=data['int_rank'],
+            head=None,
+            semilog=False,
+            title=f'Integrator rank ({label})',
+            xlabel='Generation',
+            ylabel='Value',
+            save_path=get_path('int_rank.pdf'))

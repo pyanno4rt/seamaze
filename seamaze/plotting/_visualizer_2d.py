@@ -1,28 +1,32 @@
-"""CMA-ES 2D visualizer."""
+"""2D interactive visualizer."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
 import matplotlib
+def enable_interactive_backend():
+    for backend in ['TkAgg', 'Qt5Agg', 'MacOSX']:
+        try:
+            matplotlib.use(backend)
+            return True
+        except ImportError:
+            continue
+    return False
+enable_interactive_backend()
+
 import matplotlib.pyplot as plt
 from numpy import (
     argmin, cos, linspace, maximum, meshgrid, pi, sin, sqrt, stack,
     unravel_index, zeros, zeros_like)
 from scipy.linalg import eigh
 
-# Attempt to use a robust interactive backend
-try:
-    matplotlib.use('Qt5Agg')
-except ImportError:
-    matplotlib.use('TkAgg')
-
 # %% Class definition
 
 
-class VisualizerCMAES:
+class Visualizer2D:
     """
-    CMA-ES 2D visualizer class.
+    2D interactive visualizer class.
 
     Parameters
     ----------

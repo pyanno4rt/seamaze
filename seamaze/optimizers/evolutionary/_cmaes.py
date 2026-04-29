@@ -90,7 +90,7 @@ class CMAES:
     """
 
     # Initialize the logger
-    logger = Logging('CMA-ES', 'info')
+    logger = Logging('CMA-ES', 'warning')
 
     def __init__(
             self,
@@ -304,11 +304,25 @@ class CMAES:
 
         # Update the basis variables
         self._sigma = _tell(
-            fitness, self._steps, self._weights, self._left_basis,
-            self._core_vector, self._path_sigma, self._path_cov, self._mean,
-            self._sigma, self._cov, self._lr_sigma, self._lr_cov,
-            self._lr_mean, self._lr_rank_one, self._lr_rank_mu, self._mu_eff,
-            self._damp_sigma, self._expected_path_length, self._opt_iter,
+            fitness,
+            self._steps,
+            self._weights,
+            self._left_basis,
+            self._core_vector,
+            self._path_sigma,
+            self._path_cov,
+            self._mean,
+            self._sigma,
+            self._cov,
+            self._lr_sigma,
+            self._lr_cov,
+            self._lr_mean,
+            self._lr_rank_one,
+            self._lr_rank_mu,
+            self._mu_eff,
+            self._damp_sigma,
+            self._expected_path_length,
+            self._opt_iter,
             self._elite_size)
 
         # Check if the low-rank factors should be updated
