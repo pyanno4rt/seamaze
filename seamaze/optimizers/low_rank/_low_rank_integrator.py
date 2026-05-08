@@ -5,9 +5,10 @@
 # %% External package import
 
 from numpy import (
-    clip, copyto, diag, eye, float64, matmul, maximum, zeros)
+    argsort, clip, copyto, diag, eye, float64, matmul, maximum, sqrt, zeros)
 from numpy import sum as nsum
 from numpy.linalg import pinv, svd, trace
+from numpy.random import default_rng
 from scipy.linalg import qr
 
 # %% Dynamical low-rank integrator class
@@ -839,8 +840,7 @@ class LowRankIntegrator:
             total_norm = nsum(D**2)
 
             #
-            tol = max(
-                self.truncation_tolerance_rel**2 * total_norm,
+            tol = max(self.truncation_tolerance_rel**2 * total_norm,
                 self.truncation_tolerance_abs**2)
 
             #
