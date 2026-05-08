@@ -180,7 +180,7 @@ class DLRCMAES:
             4 + int(3*log(number_of_variables))
             if number_of_individuals is None else number_of_individuals)
         self._pop_size += (2 if gradient is not None else 0)
-        self._elite_size = self._pop_size //2
+        self._elite_size = self._pop_size // 2
 
         # Initialize the weights and variance effective selection mass
         base_weights = (
@@ -348,7 +348,11 @@ class DLRCMAES:
             out=self._elite_projection[:, :core_rank])
         elite_projection = self._elite_projection[:, :core_rank]
 
-        core_matrix *= (1 - self._lr_rank_one - sum(self._weights[:self._elite_size])*self._lr_rank_mu) 
+        core_matrix *= (
+            1 
+            - self._lr_rank_one 
+            - sum(self._weights[:self._elite_size])*self._lr_rank_mu
+        ) 
 
         # Add the rank-1 update
         core_matrix += self._lr_rank_one * (path_cov_padded @ path_cov_padded.T)
@@ -613,7 +617,7 @@ class DLRCMAES:
         self._lr_sigma = (self._mu_eff + 2) / (rank + self._mu_eff + 3)
         self._lr_cov = 4 / (rank + 4)
         self._lr_rank_one = (
-        2 / ((rank + 1.3)**2 + self._mu_eff))
+            2 * min(1, self._pop_size / 6) / ((rank + 1.3)**2 + self._mu_eff))
         self._lr_rank_mu = (
             2 * (self._mu_eff + 1/self._mu_eff - 2) /
             ((rank + 2)**2 + self._mu_eff))
