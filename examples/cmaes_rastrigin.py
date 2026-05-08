@@ -26,7 +26,7 @@ monitor = MonitorCMAES(interval=1, mode='interactive', delay=0.001)
 solver = CMAES(
     number_of_variables=rastrigin.ndim,
     objective=rastrigin.__call__,
-    gradient=rastrigin.gradient,
+    # gradient=rastrigin.gradient,
     lower_variable_bounds=array(rastrigin.bounds[0]),
     upper_variable_bounds=array(rastrigin.bounds[1]),
     number_of_individuals=1000,

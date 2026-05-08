@@ -15,6 +15,7 @@ from seamaze.plotting import plot_results
 
 # %% Sphere
 
+
 # Initialize the problem
 sphere = Sphere(100)
 
