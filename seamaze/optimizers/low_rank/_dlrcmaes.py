@@ -842,13 +842,13 @@ def _tell(
     # Check if the updated sigma is lower than 1e-15
     if sigma < 1e-15:
 
-        # Clip to 1e-15
+        # Clip to 1e-1
         sigma = 1e-15
 
-    # # Else, check if the updated sigma is above 1.0
-    # elif sigma > 1.0:
+    # # Else, check if the updated sigma is above 5.0
+    elif sigma > 5.0:
 
-    #     # Clip to 1.0
-    #     sigma = 1.0
+        # Clip to 5.0
+        sigma = 5.0
 
     return sigma, elite_indices
