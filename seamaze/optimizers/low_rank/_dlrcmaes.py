@@ -388,6 +388,8 @@ class DLRCMAES:
             self._left_basis[:, :rank_cma], self._path_cov, out=self._path_full
             )
 
+        target_matrix *= (1 - self._lr_rank_one - self._lr_rank_mu)
+
         # Add the rank-1 update
         target_matrix += self._lr_rank_one * (self._path_full @ (
             self._path_full.T @ projection_matrix))
@@ -608,26 +610,18 @@ class DLRCMAES:
 
         # Get the current rank
         rank = self.integrator.rank
-
+        n = self._number_of_variables
+        
         # Update the learning rates
-        self._lr_sigma = (self._mu_eff + 2) / (rank + self._mu_eff + 3)
-        self._lr_cov = 4 / (rank + 4)
-        self._lr_rank_one = (
-        2 / ((rank + 1.3)**2 + self._mu_eff))
-        self._lr_rank_mu = (
-            2 * (self._mu_eff + 1/self._mu_eff - 2) /
-            ((rank + 2)**2 + self._mu_eff))
+        self._lr_sigma = (self._mu_eff + 2) / (n + self._mu_eff + 3)
+        self._lr_cov = 4 / (rank + 4)                                    # rank is correct here
+        self._lr_rank_one = 2 / ((n + 1.3)**2 + self._mu_eff)
+        self._lr_rank_mu = min(
+            1 - self._lr_rank_one,
+            2 * (self._mu_eff + 1/self._mu_eff - 2) / ((n + 2)**2 + self._mu_eff))
         self._lr_mean = 1.0
-
-        # Update the damping coefficient
-        self._damp_sigma = (
-            1
-            + 2*max(0, sqrt((self._mu_eff - 1) / (rank + 1)) - 1)
-            + self._lr_sigma)
-
-        # Initialize the expected path length
-        self._expected_path_length = (
-            sqrt(rank) * (1 - 1/(4*rank) + 1/(21*rank**2)))
+        self._damp_sigma = 1 + 2*max(0, sqrt((self._mu_eff - 1) / (n + 1)) - 1) + self._lr_sigma
+        self._expected_path_length = sqrt(n) * (1 - 1/(4*n) + 1/(21*n**2))
 
     def optimize(
             self,
@@ -851,7 +845,7 @@ def _tell(
         # Clip to 1e-15
         sigma = 1e-15
 
-    # Else, check if the updated sigma is above 1.0
+    # # Else, check if the updated sigma is above 1.0
     elif sigma > 1.0:
 
         # Clip to 1.0
