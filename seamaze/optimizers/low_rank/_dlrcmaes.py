@@ -846,9 +846,9 @@ def _tell(
         sigma = 1e-15
 
     # # Else, check if the updated sigma is above 1.0
-    elif sigma > 1.0:
+    # elif sigma > 1.0:
 
-        # Clip to 1.0
-        sigma = 1.0
+    #     # Clip to 1.0
+    #     sigma = 1.0
 
     return sigma, elite_indices
