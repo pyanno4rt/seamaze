@@ -1,11 +1,10 @@
-"""Rastrigin function."""
+"""Linear slope function."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
-from math import pi
-from numpy import asarray, cos, full, sin
+from numpy import asarray, full, zeros
 from numpy import sum as nsum
 
 # %% Internal package import
@@ -15,22 +14,27 @@ from seamaze.benchmarks import BenchmarkFunction
 # %% Class definition
 
 
-class Rastrigin(BenchmarkFunction):
+class LinearSlope(BenchmarkFunction):
     """
-    Rastrigin function class.
+    Linear slope function class.
 
-    A highly multimodal function combining a parabolic global bowl with an
-    orthogonal grid of local cosine ripples that triggers immense local
-    trapping.
+    A strictly linear, non-separable function featuring a constant
+    directional gradient that forces the optimizer to slide down a smooth,
+    endless slope toward the boundaries of the search space.
 
     Parameters
     ----------
     ndim : int, default=2
         Number of dimensions.
 
+    Attributes
+    ----------
+    weights : ndarray
+        Linear weights (slopes) for each dimension.
+
     Notes
     -----
-    Global optimum: x=(0, 0, ..., 0), f(x)=0.
+    Global optimum: x=(5, 5, ..., 5), f(x)=0.
     """
 
     def __init__(
@@ -39,16 +43,19 @@ class Rastrigin(BenchmarkFunction):
 
         # Initialize the superclass
         super().__init__(
-            name='Rastrigin',
+            name='Linear Slope',
             ndim=ndim,
-            bounds=(full(ndim, -5.12), full(ndim, 5.12))
+            bounds=(full(ndim, -5.0), full(ndim, 5.0))
             )
+
+        # Set the weights
+        self.weights = full(self.ndim, -1.0)
 
     def __call__(
             self,
             x):
         """
-        Compute the Rastrigin function value.
+        Compute the linear slope function value.
 
         Parameters
         ----------
@@ -64,13 +71,19 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 10.0 * self.ndim + nsum(x**2 - 10.0 * cos(2.0 * pi * x))
+        # Check if the number of dimensions is zero
+        if self.ndim == 0:
+
+            # Return zero
+            return 0.0
+
+        return nsum(self.weights * (x - 5.0))
 
     def gradient(
             self,
             x):
         """
-        Compute the Rastrigin gradient.
+        Compute the linear slope gradient.
 
         Parameters
         ----------
@@ -86,4 +99,10 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 2.0 * x + 20.0 * pi * sin(2.0*pi*x)
+        # Check if the number of dimensions is zero
+        if self.ndim == 0:
+
+            # Return zeros
+            return zeros(self.ndim)
+
+        return self.weights

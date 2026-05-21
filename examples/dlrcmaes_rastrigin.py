@@ -17,25 +17,27 @@ from seamaze.plotting import plot_results
 
 
 # Initialize the problem
-rastrigin = Rastrigin(100)
+rastrigin = Rastrigin(20)
 
 # Initialize the monitor
-monitor = MonitorDLRCMAES(interval=1, mode='interactive', delay=0.001)
+monitor = MonitorDLRCMAES(
+    interval=1, mode='interactive', plot_bounds=((-5, -5), (5, 5)),
+    delay=0.001)
 
 # Initialize the DLR-CMA-ES solver
 solver = DLRCMAES(
     number_of_variables=rastrigin.ndim,
     objective=rastrigin.__call__,
-    gradient=rastrigin.gradient,
+    # gradient=rastrigin.gradient,
     lower_variable_bounds=array(rastrigin.bounds[0]),
     upper_variable_bounds=array(rastrigin.bounds[1]),
-    number_of_individuals=1000,
+    number_of_individuals=200,
     initial_sigma=2.0,  # Set to ~20% of the range
     low_rank_integrator='symmetricaugBUG',
-    low_rank_dimension=None,
+    low_rank_dimension=10,
     low_rank_tolerance_rel=1e-2,
     low_rank_tolerance_abs=1e-8,
-    maximum_iterations=500,
+    maximum_iterations=1000,
     maximum_wall_time=7200,
     fitness_threshold=None,
     fitness_window_size=30,
@@ -54,6 +56,7 @@ plot_results(
     label='Rastrigin',
     show_objective=True,
     show_fitness=True,
+    show_bound_viol=True,
     show_step_size=True,
     show_mean_change_norm=True,
     show_sigma_path_norm=True,

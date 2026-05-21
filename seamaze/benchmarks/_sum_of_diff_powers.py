@@ -1,11 +1,11 @@
-"""Rastrigin function."""
+"""Sum-of-different-powers function."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
-from math import pi
-from numpy import asarray, cos, full, sin
+from numpy import arange, asarray, full, sign
+from numpy import abs as nabs
 from numpy import sum as nsum
 
 # %% Internal package import
@@ -15,18 +15,23 @@ from seamaze.benchmarks import BenchmarkFunction
 # %% Class definition
 
 
-class Rastrigin(BenchmarkFunction):
+class SumOfDiffPowers(BenchmarkFunction):
     """
-    Rastrigin function class.
+    Sum-of-different-powers function class.
 
-    A highly multimodal function combining a parabolic global bowl with an
-    orthogonal grid of local cosine ripples that triggers immense local
-    trapping.
+    An asymmetric, scale-variant function where exponentially varying
+    exponents across dimensions create a severely distorted landscape near the
+    global minimum.
 
     Parameters
     ----------
     ndim : int, default=2
         Number of dimensions.
+
+    Attributes
+    ----------
+    exponents : ndarray
+        Linearly increasing exponents (from 2.0 to 6.0).
 
     Notes
     -----
@@ -39,16 +44,27 @@ class Rastrigin(BenchmarkFunction):
 
         # Initialize the superclass
         super().__init__(
-            name='Rastrigin',
+            name='Sum of Different Powers',
             ndim=ndim,
-            bounds=(full(ndim, -5.12), full(ndim, 5.12))
+            bounds=(full(ndim, -5.0), full(ndim, 5.0))
             )
+
+        # Check if the number of dimension is smaller or equal to one
+        if self.ndim <= 1:
+
+            # Set the exponent to 2.0
+            self.exponents = full(self.ndim, 2.0)
+
+        else:
+
+            # Precompute the exponent series
+            self.exponents = 2.0 + 4.0 * arange(self.ndim) / (self.ndim - 1.0)
 
     def __call__(
             self,
             x):
         """
-        Compute the Rastrigin function value.
+        Compute the sum-of-different-powers function value.
 
         Parameters
         ----------
@@ -64,13 +80,13 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 10.0 * self.ndim + nsum(x**2 - 10.0 * cos(2.0 * pi * x))
+        return nsum(nabs(x) ** self.exponents)
 
     def gradient(
             self,
             x):
         """
-        Compute the Rastrigin gradient.
+        Compute the sum-of-different-powers gradient.
 
         Parameters
         ----------
@@ -86,4 +102,4 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 2.0 * x + 20.0 * pi * sin(2.0*pi*x)
+        return self.exponents * sign(x) * (nabs(x) ** (self.exponents - 1.0))

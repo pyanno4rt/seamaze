@@ -42,7 +42,7 @@ class Visualizer2D:
             objective,
             bounds,
             dimensions,
-            grid_points=100):
+            grid_points=300):
 
         #
         plt.rcParams.update({
@@ -71,10 +71,14 @@ class Visualizer2D:
         self.y_min, self.y_max = bounds[0][1], bounds[1][1]
 
         # Create the figure
-        self.fig, self.ax = plt.subplots(figsize=(10, 8))
+        self.fig, (self.ax, self.ax_hist) = plt.subplots(
+            1, 2, figsize=(14, 8), gridspec_kw={'width_ratios': [2.5, 1]}
+            )
 
         # Manual adjustment: reserve 15% space at the top for the header
-        self.fig.subplots_adjust(top=0.85, bottom=0.1, left=0.1, right=0.95)
+        self.fig.subplots_adjust(
+            top=0.83, bottom=0.1, left=0.08, right=0.95, wspace=0.25
+            )
 
         # Precompute landscape
         x = linspace(self.x_min, self.x_max, grid_points)
@@ -115,8 +119,19 @@ class Visualizer2D:
         self.ax.set_ylabel(r'$x_2$')
 
         #
+        self.ax_hist.set_title('Singular value spectrum', fontsize=10, pad=10)
+        self.ax_hist.set_xlabel('Index')
+        self.ax_hist.set_ylabel('Value')
+        self.ax_hist.grid(True, linestyle='--', alpha=0.5)
+
+        #
+        self.ax_hist.set_xlim(-0.5, dimensions - 0.5)
+
+        #
+        self.pop_dots = None
         self.mean_dot = None
         self.cov_line = None
+        self.spec_dots = None
 
         #
         self.ax.set_xlim(self.x_min, self.x_max)
@@ -129,6 +144,7 @@ class Visualizer2D:
     def update(
             self,
             iteration,
+            population,
             mean,
             cov,
             sigma,
@@ -144,37 +160,69 @@ class Visualizer2D:
 
         #
         mu_2d = mean[:2]
+        cov_2d = cov[:2, :2]
+        vals, vecs = eigh(cov_2d)
 
         #
-        if self.mean_dot: self.mean_dot.remove()
-        if self.cov_line: self.cov_line.remove()
-
-        # Distribution geometry
-        vals, vecs = eigh(cov[:2, :2])
         t = linspace(0, 2 * pi, 100)
         circle = stack([cos(t), sin(t)])
         scaling = sigma * sqrt(maximum(vals, 1e-12))
-        ellipse_2d = (vecs @ (scaling[:, None] * circle))
+        ellipse_2d = vecs @ (scaling[:, None] * circle)
 
-        # Plot search distribution and mean
+        #
+        global_eigenvalues, _ = eigh(cov)
+        singular_values = sigma * sqrt(maximum(global_eigenvalues, 1e-12))
+        singular_values_sorted = sorted(singular_values, reverse=True)
+        indices = linspace(0, self.dimensions - 1, self.dimensions)
+
+        #
+        if self.pop_dots: self.pop_dots.remove()
+        if self.mean_dot: self.mean_dot.remove()
+        if self.cov_line: self.cov_line.remove()
+        if self.spec_dots: self.spec_dots.remove()
+
+        #
+        self.pop_dots = self.ax.scatter(
+            population[:, 0], population[:, 1],
+            color='cyan', alpha=0.6, s=15, zorder=5)
+
         self.cov_line, = self.ax.plot(
             ellipse_2d[0, :] + mu_2d[0], ellipse_2d[1, :] + mu_2d[1],
             color='white', lw=1.8, zorder=10)
 
-        #
         self.mean_dot = self.ax.scatter(
             mu_2d[0], mu_2d[1], color='white', marker='*', s=100,
-            edgecolors='white', zorder=11)
+            edgecolors='black', zorder=11)
 
-        # UPDATE HEADER using suptitle for guaranteed visibility
-        self.fig.suptitle(
+        #
+        self.ax.set_title(
+            f"Objective space (x1, x2)\n"
             f"Generation {iteration:d} | $f$ = {fitness:.2e} | "
-            f"$\sigma$ = {sigma:.2e} ", fontsize=12, fontweight='normal',
-            y=0.9)
+            f"$\sigma$ = {sigma:.2e} ", fontsize=10, fontweight='normal',
+            pad=10, loc='center'
+            )
+
+        #
+        self.spec_dots = self.ax_hist.scatter(
+            indices, singular_values_sorted, color='crimson',
+            edgecolors='black', alpha=0.8, s=25, zorder=5
+            )
+
+        #
+        max_val = max(singular_values_sorted)
+        min_val = min(singular_values_sorted)
+        self.ax_hist.set_ylim(0.99 * min_val, max_val * 1.01)
+
+        #
+        x_offset = 4.0
+        self.ax_hist.set_xlim(-x_offset, (self.dimensions - 1) + x_offset)
+
+        #
+        self.fig.suptitle(
+            "Visualizer2D", fontsize=16, fontweight='bold'
+            )
 
         #
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
-
-        #
         plt.pause(delay)

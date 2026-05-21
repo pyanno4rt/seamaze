@@ -1,11 +1,10 @@
-"""Rastrigin function."""
+"""Ellipsoid function."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
-from math import pi
-from numpy import asarray, cos, full, sin
+from numpy import arange, asarray, full
 from numpy import sum as nsum
 
 # %% Internal package import
@@ -15,18 +14,23 @@ from seamaze.benchmarks import BenchmarkFunction
 # %% Class definition
 
 
-class Rastrigin(BenchmarkFunction):
+class Ellipsoid(BenchmarkFunction):
     """
-    Rastrigin function class.
+    Ellipsoid function class.
 
-    A highly multimodal function combining a parabolic global bowl with an
-    orthogonal grid of local cosine ripples that triggers immense local
-    trapping.
+    A highly ill-conditioned, non-separable convex function featuring a
+    parabolic landscape with exponentially increasing stiffness along the
+    coordinate axes toward a single global minimum.
 
     Parameters
     ----------
     ndim : int, default=2
         Number of dimensions.
+
+    Attributes
+    ----------
+    coefficients : ndarray
+        Exponentially growing scaling factors for each dimension.
 
     Notes
     -----
@@ -39,16 +43,29 @@ class Rastrigin(BenchmarkFunction):
 
         # Initialize the superclass
         super().__init__(
-            name='Rastrigin',
+            name='Ellipsoid',
             ndim=ndim,
-            bounds=(full(ndim, -5.12), full(ndim, 5.12))
+            bounds=(full(ndim, -5.0), full(ndim, 5.0))
             )
+
+        # Check if the number of dimensions is smaller or equal to one
+        if self.ndim <= 1:
+
+            # Set the coefficient to 1.0
+            self.coefficients = full(self.ndim, 1.0)
+
+        else:
+
+            # Precompute the exponential scaling coefficients
+            self.coefficients = (
+                10.0**(6.0 * arange(self.ndim) / (self.ndim - 1.0))
+                )
 
     def __call__(
             self,
             x):
         """
-        Compute the Rastrigin function value.
+        Compute the ellipsoid function value.
 
         Parameters
         ----------
@@ -64,13 +81,13 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 10.0 * self.ndim + nsum(x**2 - 10.0 * cos(2.0 * pi * x))
+        return nsum(self.coefficients * (x**2))
 
     def gradient(
             self,
             x):
         """
-        Compute the Rastrigin gradient.
+        Compute the ellipsoid gradient.
 
         Parameters
         ----------
@@ -86,4 +103,4 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 2.0 * x + 20.0 * pi * sin(2.0*pi*x)
+        return 2.0 * self.coefficients * x

@@ -1,4 +1,5 @@
-"""Covariance matrix adaptation evolution strategy (CMA-ES)."""
+"""Limited-memory covariance matrix adaptation evolution strategy (LM-CMA-ES).
+"""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
@@ -10,13 +11,8 @@ from collections import deque
 from math import inf
 from numba import njit
 from numpy import (
-    add, arange, argmax, argmin, argsort, array, array_equal,
-    asfortranarray, clip, exp, eye, float64, full, log, maximum, minimum,
-    ones, sqrt, where, zeros)
-from numpy import abs as nabs
-from numpy import any as nany
-from numpy import max as nmax
-from numpy import min as nmin
+    add, arange, argmin, argsort, array, clip, exp, eye, float64, full, log,
+    matmul, maximum, median, ones, sqrt, zeros)
 from numpy import sum as nsum
 from numpy.linalg import norm
 from numpy.random import default_rng
@@ -30,14 +26,12 @@ from seamaze.utils import make_compat
 # %% Class definition
 
 
-class CMAES:
+class LMCMAES:
     """
-    Covariance matrix adaptation evolution strategy (CMA-ES) class.
+    Limited-memory covariance matrix adaptation evolution strategy \
+    (LM-CMA-ES) class.
 
-    This class implements the CMA-ES algorithm according to the paper:
-
-        Hansen, N. (2016). The CMA Evolution Strategy: A Tutorial. ArXiv, \
-        abs/1604.00772.
+    This class implements the LM-CMA-ES algorithm.
 
     Parameters
     ----------
@@ -63,27 +57,27 @@ class CMAES:
         Population size. Defaults to 4 + int(3*log(`number_of_variables`)).
 
     initial_sigma : float, default=0.3
-        Initial step size.
+        Initial step size (standard deviation).
 
-    maximum_iterations : int, default=10000
+    maximum_iterations : int, default=1000
         Maximum number of generations (iterations) to run before stopping.
 
-    maximum_wall_time : int or float, default=43200
+    maximum_wall_time : int or float, default=7200
         Maximum allowed wall-clock time in seconds.
 
     fitness_threshold : int or float, default=-inf
         Target fitness value. If the objective value reaches this threshold, \
         optimization stops (success criterion).
 
-    fitness_window_size : int, default=50
-        Number of past iterations to consider for the fitness range \
+    fitness_window_size : int, default=20
+        Number of past iterations to consider for the median fitness \
         stagnation check.
 
-    tolerance : float, default=1e-6
+    tolerance : float, default=1e-3
         Absolute and relative termination tolerance: stops if the change in \
-        fitness range over `fitness_window_size` is below this value.
+        median fitness over `fitness_window_size` is below this value.
 
-    sigma_threshold : float, default=1e-8
+    sigma_threshold : float, default=1e-3
         Minimum allowed step size. If the step size falls below this limit, \
         optimization stops (convergence/collapse criterion).
 
@@ -106,20 +100,20 @@ class CMAES:
             upper_variable_bounds=None,
             number_of_individuals=None,
             initial_sigma=0.3,
-            maximum_iterations=10000,
-            maximum_wall_time=43200,
+            maximum_iterations=1000,
+            maximum_wall_time=7200,
             fitness_threshold=-inf,
-            fitness_window_size=50,
-            tolerance=1e-6,
-            sigma_threshold=1e-8,
+            fitness_window_size=20,
+            tolerance=1e-3,
+            sigma_threshold=1e-3,
             update_interval=1,
             callback=None):
 
         # Initialize the logger
-        self.logger = Logging('CMA-ES', 'debug')
+        self.logger = Logging('LM-CMA-ES', 'debug')
 
         # Log a message about the initialization
-        self.logger.info('Initializing CMA-ES ...')
+        self.logger.info('Initializing LM-CMA-ES ...')
 
         # Set the random seed
         self._rng = default_rng(42)
@@ -135,6 +129,9 @@ class CMAES:
             full(self._number_of_variables, inf)
             if upper_variable_bounds is None else upper_variable_bounds)
 
+        # Initialize the update frequency
+        self._update_interval = update_interval
+
         # Initialize the population and elite sizes
         self._pop_size = (
             4 + int(3*log(self._number_of_variables))
@@ -142,57 +139,30 @@ class CMAES:
         self._pop_size += (2 if gradient is not None else 0)
         self._elite_size = self._pop_size // 2
 
-        # Initialize the base weights and variance effective selection mass
-        _base_weights = (
-            log((self._pop_size + 1) / 2) - log(arange(1, self._pop_size + 1))
+        # Initialize the weights and variance effective selection mass
+        base_weights = (
+            log(self._elite_size + 0.5) - log(arange(1, self._elite_size + 1))
             )
-        _bw_pos_sum = nsum(_base_weights[:self._elite_size])
-        _bw_neg_sum = nsum(_base_weights[self._elite_size:])
-
-        self._mu_eff = (
-            _bw_pos_sum**2 / nsum(_base_weights[:self._elite_size]**2)
-            )
-        _mu_eff_neg = (
-            _bw_neg_sum**2 / nsum(_base_weights[self._elite_size:]**2)
-            )
+        self._weights = base_weights / nsum(base_weights)
+        self._mu_eff = 1 / nsum(self._weights**2)
 
         # Initialize the learning rates
         self._lr_sigma = (
-            (self._mu_eff + 2) / (self._number_of_variables + self._mu_eff + 5)
+            (self._mu_eff + 2) / (self._number_of_variables + self._mu_eff + 3)
             )
-        self._lr_cov = (
-            (4 + self._mu_eff/self._number_of_variables) /
-            (self._number_of_variables + 4
-             + 2*self._mu_eff/self._number_of_variables)
-            )
+        self._lr_cov = 4 / (self._number_of_variables + 4)
         self._lr_rank_one = (
-            2 / ((self._number_of_variables + 1.3)**2 + self._mu_eff)
-            )
-        self._lr_rank_mu = min(
-            1.0 - self._lr_rank_one,
-            2.0 * ((0.25 + self._mu_eff + 1.0/self._mu_eff - 2.0) /
-                   ((self._number_of_variables+2.0)**2 + 2.0*self._mu_eff/2.0))
-            )
+            2 * min(1, self._pop_size/6) /
+            ((self._number_of_variables + 1.3)**2 + self._mu_eff))
+        self._lr_rank_mu = (
+            2*(self._mu_eff + 1/self._mu_eff - 2) /
+            ((self._number_of_variables + 2)**2 + self._mu_eff))
         self._lr_mean = 1.0
-
-        # Adjust the weights
-        _alpha_mu_neg = 1.0 + self._lr_rank_one / self._lr_rank_mu
-        _alpha_mu_eff_neg = 1.0 + (2.0 * _mu_eff_neg) / (self._mu_eff + 2.0)
-        _alpha_posdef_neg = (
-            (1.0 - self._lr_rank_one - self._lr_rank_mu)
-            / (self._number_of_variables * self._lr_rank_mu)
-            )
-        _alpha_min = min(_alpha_mu_neg, _alpha_mu_eff_neg, _alpha_posdef_neg)
-
-        self._weights = array([
-            (1.0 / _bw_pos_sum) * wi if wi > 0.0 else
-            (_alpha_min / abs(_bw_neg_sum)) * wi
-            for wi in _base_weights])
 
         # Initialize the damping coefficient
         self._damp_sigma = (
             1
-            + 2*max(0, sqrt((self._mu_eff-1)/(self._number_of_variables+1))-1)
+            + 2*max(0, sqrt((self._mu_eff-1) / self._number_of_variables)-1)
             + self._lr_sigma)
 
         # Initialize the expected path length
@@ -202,10 +172,6 @@ class CMAES:
                 - 1/(4*self._number_of_variables)
                 + 1/(21*self._number_of_variables**2))
             )
-
-        # Initialize the bound/constraint handling parameters
-        self._squared_bound_errors = None
-        self._gamma = None
 
         # Initialize the adaptive variables
         self._wall_start = None
@@ -240,22 +206,30 @@ class CMAES:
         self.tolerance = tolerance
         self._fitness = None
         self._fitness_history = deque(maxlen=fitness_window_size)
-        self._update_interval = update_interval
         self._callback = callback
         self._result = {
             'optimal_point': None, 'optimal_value': inf, 'solver_info': None,
             'wall_time': None}
 
     def ask(self):
-        """Generate a new population."""
+        """
+        Generate a new population.
+
+        Returns
+        -------
+        ndarray
+            Sample population (bound to the feasible region).
+
+        ndarray
+            Sample steps.
+        """
 
         # Sample from the standard multivariate Gaussian
-        num_random = self._pop_size - (2 if self.gradient is not None else 0)
         zsamples = self._rng.standard_normal(
-            (num_random, self._number_of_variables))
+            (self._pop_size, self._number_of_variables))
 
         # Sample steps from the multivariate Gaussian
-        self._steps[:num_random] = zsamples @ self._root_cov.T
+        matmul(zsamples, self._root_cov.T, out=self._steps)
 
         # Check if a gradient has been provided
         if self.gradient is not None:
@@ -276,38 +250,13 @@ class CMAES:
             self._steps[-2] = -gradient_step
             self._steps[-1] = gradient_step
 
-        else:
-
-            # Fill the remaining samples randomly
-            self._steps[-2:] = (
-                self._rng.standard_normal((2, self._number_of_variables))
-                @ self._root_cov.T)
-
         # Sample the new population
         add(self._mean, self._sigma * self._steps, out=self._population)
 
-        # Compute the distance to the lower and upper bounds
-        eps_lower = maximum(0.0, self.lower_variable_bounds - self._population)
-        eps_upper = maximum(0.0, self._population - self.upper_variable_bounds)
-
-        # Sum the squared errors for each individual
-        self._squared_bound_errors = nsum((eps_lower + eps_upper) ** 2, axis=1)
-
-        # Mirror the violating individuals into the feasible region
-        self._population = where(
-            self._population < self.lower_variable_bounds,
-            self.lower_variable_bounds + eps_lower,
-            self._population
-            )
-        self._population = where(
-            self._population > self.upper_variable_bounds,
-            self.upper_variable_bounds - eps_upper,
-            self._population
-            )
-
-        # Enforce hard constraints to avoid numerical round-off errors
-        clip(self._population, a_min=self.lower_variable_bounds,
-             a_max=self.upper_variable_bounds, out=self._population)
+        # Get the "feasible" population
+        clip(
+            self._population, a_min=self.lower_variable_bounds,
+            a_max=self.upper_variable_bounds, out=self._population)
 
     def evaluate(self):
         """
@@ -316,60 +265,32 @@ class CMAES:
         Returns
         -------
         ndarray
-            Unpenalized fitness values for the population.
-
-        ndarray
-            Penalized fitness values for the population.
+            Fitness values for the population.
         """
 
-        # Compute the unpenalized fitness values
-        true_fitness = array([
+        # Compute the fitness values
+        fitness = array([
             self.objective(individual, track=False)
             for individual in self._population])
 
-        # Check if the penalty factor has been initialized
-        if self._gamma is None:
-
-            # Compute the unpenalized fitness range
-            fitness_range = nmax(true_fitness) - nmin(true_fitness)
-
-            # Scale the penalty factor to the fitness range
-            self._gamma = (
-                (fitness_range if fitness_range > 1e-8 else 10.0) /
-                (self._number_of_variables + 1e-15)
-                )
-
-        # Compute the penalied fitness values
-        selection_fitness = (
-            true_fitness + self._gamma * self._squared_bound_errors
-            )
-
-        # Check if any bound violations occurred
-        any_errors = nany(self._squared_bound_errors > 0)
-
-        # Adapt the penalty factor
-        self._gamma = clip(
-            self._gamma * (1.1 * any_errors + 0.95 * (1 - any_errors)),
-            1e-5, 1e10)
-
-        # Get the best unpenalized fitness
-        best_index = argmin(selection_fitness)
-        true_best_fitness = true_fitness[best_index]
+        # Get the best fitness
+        best_index = argmin(fitness)
+        best_fitness = fitness[best_index]
 
         # Append the best fitness to the history
-        self._fitness_history.append(true_best_fitness)
+        self._fitness_history.append(best_fitness)
 
         # Check if an improved solution has been found
-        if true_best_fitness < self._result['optimal_value']:
+        if self._result['optimal_value'] - best_fitness > 0:
 
             # Update the optimal value and point
-            self._result['optimal_value'] = true_best_fitness
+            self._result['optimal_value'] = best_fitness
             self._result['optimal_point'] = self._population[best_index].copy()
 
         # Re-evaluate the current best individual for tracking
         self.objective(self._result['optimal_point'])
 
-        return true_fitness, selection_fitness
+        return fitness
 
     def tell(
             self,
@@ -415,7 +336,7 @@ class CMAES:
 
             # Sort the singular values and vectors in descending order
             self._core_vector = self._core_vector[::-1]
-            self._left_basis = asfortranarray(self._left_basis[:, ::-1])
+            self._left_basis = self._left_basis[:, ::-1]
 
             # Clip the singular values
             maximum(self._core_vector, 1e-12, out=self._core_vector)
@@ -425,7 +346,7 @@ class CMAES:
                 (self._left_basis * self._core_vector) @ self._left_basis.T)
 
             # Update the sampling matrix
-            self._root_cov = self._left_basis * sqrt(self._core_vector)[None, :]
+            self._root_cov = self._left_basis * sqrt(self._core_vector)
 
     def optimize(
             self,
@@ -462,10 +383,10 @@ class CMAES:
                 self.ask()
 
                 # Evaluate the population's fitness
-                self._fitness, selection_fitness = self.evaluate()
+                self._fitness = self.evaluate()
 
                 # "Tell" the algorithm to update its parameters
-                self.tell(selection_fitness)
+                self.tell(self._fitness)
 
                 # Check if a callback has been provided
                 if self._callback is not None:
@@ -541,18 +462,6 @@ class CMAES:
 
             return True
 
-        # Get the maximum and minimum eigenvalue
-        max_ev = nmax(self._core_vector)
-        min_ev = nmin(self._core_vector)
-
-        # Check if any eigenvalue is zero or the condition number explodes
-        if min_ev <= 0 or (max_ev / min_ev) >= 1e14:
-
-            # Add the solver info
-            self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'
-
-            return True
-
         # Check if the fitness history is non-empty
         if len(self._fitness_history) > 0:
 
@@ -568,16 +477,15 @@ class CMAES:
         # Check if the history is completely filled
         if len(self._fitness_history) == self._fitness_history.maxlen:
 
-            # Convert the history to a list
+            # Converthe history to a list
             history = list(self._fitness_history)
 
-            # Get the best and worst fitness within the window
-            min_fit = nmin(history)
-            max_fit = nmax(history)
-            abs_range = max_fit - min_fit
+            # Get the first and second half median
+            first_median = median(history[:len(history) // 2])
+            second_median = median(history[len(history) // 2:])
 
             # Check if the absolute median difference is below tolerance
-            if abs_range < self.tolerance:
+            if abs(first_median - second_median) < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (
@@ -585,26 +493,19 @@ class CMAES:
 
                 return True
 
+            # Get the relative median difference
+            diff = (
+                abs(first_median - second_median) /
+                (abs(second_median) + 1e-15))
+
             # Check if the relative median difference is below tolerance
-            if abs_range / (nabs(min_fit) + 1e-15) < self.tolerance:
+            if diff < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (
                     'RELATIVE_FITNESS_PLATEAU_REACHED')
 
                 return True
-
-        # Get the longest axis
-        longest_axis = self._root_cov[:, argmax(norm(self._root_cov, axis=0))]
-
-        # Check if the mean is not shifted along the longest axis
-        if array_equal(
-                self._mean, self._mean + 0.1 * self._sigma * longest_axis):
-
-            # Add the solver info
-            self._result['solver_info'] = 'NO_EFFECT_AXIS'
-
-            return True
 
         return False
 
@@ -616,17 +517,14 @@ def _tell(
     mu_eff, damp_sigma, expected_path_length, opt_iter, elite_size):
     """Update the basic CMAES variables."""
 
-    # Get the search space dimension
-    dim = mean.shape[0]
+    # Get the indices of the elite fitness values
+    elite_indices = argsort(fitness)[:elite_size]
 
-    # Sort the population by fitness
-    sorted_indices = argsort(fitness)
-    elite_indices = sorted_indices[:elite_size]
+    # Get the number of variables
+    number_of_variables = mean.shape[0]
 
-    # Initialize the elite mean step
     elite_weights = weights[:elite_size].reshape(-1, 1)
-    elite_mean_step = nsum(
-        steps[elite_indices] * elite_weights, axis=0)
+    elite_mean_step = nsum(steps[elite_indices] * elite_weights, axis=0)
 
     # Calculate the inverse rooted eigenvalues
     inv_root_core_vec = 1.0 / (sqrt(core_vector) + 1e-15)
@@ -644,24 +542,11 @@ def _tell(
     # Get the norm of the step-size evolution path
     ps_norm = norm(path_sigma)
 
-    # Update the step size
-    sigma_update = sigma * exp(
-        (lr_sigma / damp_sigma) * (ps_norm / expected_path_length - 1.0))
-
-    # Check if the updated sigma is lower than 1e-15
-    if sigma_update < 1e-15:
-
-        # Clip to 1e-15
-        sigma_update = 1e-15
-
-    # Update the mean
-    mean += (lr_mean * sigma) * elite_mean_step
-
     # Compute the update switch for the covariance matrix
     update_switch = (
         1.0
-        if ps_norm / sqrt(1.0 - (1.0 - lr_sigma)**(2.0 * (opt_iter + 1)))
-        < (1.4 + 2.0/(mean.shape[0] + 1.0)) * expected_path_length
+        if ps_norm / sqrt(1 - (1-lr_sigma)**(2*(opt_iter + 1)))
+        < (1.4 + 2/(number_of_variables+1)) * expected_path_length
         else 0.0)
 
     # Compute the 'keep' term of the evolution path
@@ -673,43 +558,31 @@ def _tell(
     # Update the evolution path element
     path_cov[:, 0] += coeff * elite_mean_step
 
+    # Update the mean
+    mean += (lr_mean * sigma) * elite_mean_step
+
+    # Update the step size
+    sigma_update = sigma * exp(
+        (lr_sigma / damp_sigma) * (ps_norm / expected_path_length - 1))
+
+    # Check if the updated sigma is lower than 1e-15
+    if sigma_update < 1e-15:
+
+        # Clip to 1e-15
+        sigma_update = 1e-15
+
     # Get the adjusted rank-1 learning rate
     lr_rank_one_adj = (1.0-update_switch) * lr_rank_one * lr_cov * (2.0-lr_cov)
 
-    # Synchronize steps and weights with sorted fitness order
-    steps_sorted = steps[sorted_indices]
-    weights_sorted = weights.copy()
+    # Get the elite steps
+    elite_steps = steps[elite_indices]
 
-    # Mask for negative weights
-    neg_mask = weights_sorted < 0.0
-
-    # Check if any negative weights are present
-    if nany(neg_mask):
-
-        # Extract negative steps into a contiguous block
-        steps_neg = steps_sorted[neg_mask].copy()
-
-        # Perform an isotropic transformation
-        steps_neg_tr = (left_basis.T @ steps_neg.T).T * inv_root_core_vec
-
-        # Get the squared norms of the isotropic vectors
-        squared_z_norms = nsum(steps_neg_tr**2, axis=1)
-
-        # Get the scaling factors
-        factors = dim / (squared_z_norms + 1e-15)
-
-        # Rescale the weights to guarantee positive definiteness
-        weights_sorted[neg_mask] *= minimum(1.0, factors)
-
-    # Compute the rank-mu term
-    rank_mu_term = (
-        (steps_sorted.T * weights_sorted.reshape(1, -1)) @ steps_sorted
-        )
+    # Compute the rank-mu update
+    rank_mu_term = (elite_steps.T * weights[:elite_size]) @ elite_steps
 
     # Update the covariance matrix
-    cov_update = cov * (1.0 - lr_rank_one - lr_rank_mu + lr_rank_one_adj)
-    cov_update += lr_rank_one * (path_cov @ path_cov.T)
-    cov_update += lr_rank_mu * rank_mu_term
-    cov[:] = cov_update
+    cov *= (1 - lr_rank_one - lr_rank_mu + lr_rank_one_adj)
+    cov += lr_rank_one * (path_cov @ path_cov.T)
+    cov += lr_rank_mu * rank_mu_term
 
     return sigma_update

@@ -1,11 +1,10 @@
-"""Rastrigin function."""
+"""Rosenbrock function."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
-from math import pi
-from numpy import asarray, cos, full, sin
+from numpy import asarray, full, zeros
 from numpy import sum as nsum
 
 # %% Internal package import
@@ -15,13 +14,12 @@ from seamaze.benchmarks import BenchmarkFunction
 # %% Class definition
 
 
-class Rastrigin(BenchmarkFunction):
+class Rosenbrock(BenchmarkFunction):
     """
-    Rastrigin function class.
+    Rosenbrock function class.
 
-    A highly multimodal function combining a parabolic global bowl with an
-    orthogonal grid of local cosine ripples that triggers immense local
-    trapping.
+    A notoriously deceptive function featuring a long, narrow, and curved
+    parabolic valley that forces optimizers to perform slow, coordinated steps.
 
     Parameters
     ----------
@@ -30,7 +28,7 @@ class Rastrigin(BenchmarkFunction):
 
     Notes
     -----
-    Global optimum: x=(0, 0, ..., 0), f(x)=0.
+    Global optimum: x=(1, 1, ..., 1), f(x)=0.
     """
 
     def __init__(
@@ -39,16 +37,16 @@ class Rastrigin(BenchmarkFunction):
 
         # Initialize the superclass
         super().__init__(
-            name='Rastrigin',
+            name='Rosenbrock',
             ndim=ndim,
-            bounds=(full(ndim, -5.12), full(ndim, 5.12))
+            bounds=(full(ndim, -5.0), full(ndim, 5.0))
             )
 
     def __call__(
             self,
             x):
         """
-        Compute the Rastrigin function value.
+        Compute the Rosenbrock function value.
 
         Parameters
         ----------
@@ -64,13 +62,19 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 10.0 * self.ndim + nsum(x**2 - 10.0 * cos(2.0 * pi * x))
+        # Check if the number of dimensions is smaller or equal to one
+        if self.ndim <= 1:
+
+            # Return zero
+            return 0.0
+
+        return nsum(100.0 * (x[1:] - x[:-1]**2)**2 + (1.0 - x[:-1])**2)
 
     def gradient(
             self,
             x):
         """
-        Compute the Rastrigin gradient.
+        Compute the Rosenbrock gradient.
 
         Parameters
         ----------
@@ -86,4 +90,13 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 2.0 * x + 20.0 * pi * sin(2.0*pi*x)
+        # Initialize the gradient
+        grad = zeros(self.ndim)
+
+        # Compute the derivative from x_0 to x_{n-2}
+        grad[:-1] = 400.0 * x[:-1] * (x[:-1]**2 - x[1:]) + 2.0 * (x[:-1] - 1.0)
+
+        # Add the derivative from x_1 to x_{n-1}
+        grad[1:] += 200.0 * (x[1:] - x[:-1]**2)
+
+        return grad

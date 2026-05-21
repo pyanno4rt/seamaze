@@ -1,10 +1,10 @@
-"""Styblinski-Tang function."""
+"""Rotated ellipsoid function."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
-from numpy import asarray, full
+from numpy import asarray, cumsum, full
 from numpy import sum as nsum
 
 # %% Internal package import
@@ -14,24 +14,22 @@ from seamaze.benchmarks import BenchmarkFunction
 # %% Class definition
 
 
-class StyblinskiTang(BenchmarkFunction):
+class RotatedEllipsoid(BenchmarkFunction):
     """
-    Styblinski-Tang function class.
+    Rotated ellipsoid function class.
+
+    An ill-conditioned function where a coordinate rotation matrix misaligns
+    the exponentially scaled parabolic axes, preventing coordinate-wise
+    optimization.
 
     Parameters
     ----------
     ndim : int, default=2
         Number of dimensions.
 
-    Attributes
-    ----------
-    ndim : int
-        Number of dimensions.
-
     Notes
     -----
-    Global optimum: x=(-2.903534, -2.903534, ..., -2.903534), \
-    f(x)=-39.166165*n.
+    Global optimum: x=(0, 0, ..., 0), f(x)=0.
     """
 
     def __init__(
@@ -40,17 +38,16 @@ class StyblinskiTang(BenchmarkFunction):
 
         # Initialize the superclass
         super().__init__(
-            name='Styblinski-Tang',
-            bounds=(full(ndim, -5.0), full(ndim, 5.0)))
-
-        # Get the argument
-        self.ndim = ndim
+            name='Rotated Ellipsoid',
+            ndim=ndim,
+            bounds=(full(ndim, -5.0), full(ndim, 5.0))
+            )
 
     def __call__(
             self,
             x):
         """
-        Compute the Styblinski-Tang function value.
+        Compute the rotated ellipsoid function value.
 
         Parameters
         ----------
@@ -63,16 +60,16 @@ class StyblinskiTang(BenchmarkFunction):
             Function value.
         """
 
-        # Ensure that x is an array
+        # Ensure that the input is an array
         x = asarray(x)
 
-        return nsum(x**4 - 16*x**2 + 5*x) / 2
+        return nsum(cumsum(x)**2)
 
     def gradient(
             self,
             x):
         """
-        Compute the Styblinski-Tang gradient.
+        Compute the rotated ellipsoid gradient.
 
         Parameters
         ----------
@@ -85,7 +82,10 @@ class StyblinskiTang(BenchmarkFunction):
             Gradient value.
         """
 
-        # Ensure that x is an array
+        # Ensure that the input is an array
         x = asarray(x)
 
-        return 2.0 * x**3 - 16 * x + 2.5
+        # Compute the cumulative sum
+        cum_sums = cumsum(x)
+
+        return 2.0 * cumsum(cum_sums[::-1])[::-1]

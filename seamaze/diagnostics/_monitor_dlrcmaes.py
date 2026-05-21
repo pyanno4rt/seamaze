@@ -30,6 +30,10 @@ class MonitorDLRCMAES:
         The monitoring mode. If 'interactive', an interactive 2D \
         visualization of the optimization progress is displayed.
 
+    plot_bounds : tuple, list or ndarray, default=None
+        Visualization bounds as coordinate pairs ((x1, y1), (x2, y2)). Only \
+        used (and mandatory) if mode is set to 'interactive'.
+
     delay : int or float, default=0.001
         The time of delay for interactive plotting (in seconds). Only used if \
         mode is set to 'interactive'.
@@ -40,6 +44,9 @@ class MonitorDLRCMAES:
         See 'Parameters'.
 
     mode : {'interactive', 'silent'}
+        See 'Parameters'.
+
+    plot_bounds : tuple, list or ndarray, default=None
         See 'Parameters'.
 
     delay : int or float
@@ -63,6 +70,7 @@ class MonitorDLRCMAES:
             self,
             interval=1,
             mode='silent',
+            plot_bounds=None,
             delay=0.001):
 
         # Initialize the interval
@@ -70,6 +78,7 @@ class MonitorDLRCMAES:
 
         # Initialize the visualization attributes
         self.mode = mode
+        self.plot_bounds = plot_bounds
         self._visualizer = None
 
         # Initialize the delay
@@ -150,14 +159,10 @@ class MonitorDLRCMAES:
             # Check if an interactive plot should be created
             if self.mode == 'interactive':
 
-                # Get the variable bounds
-                bounds = (
-                    solver.lower_variable_bounds, solver.upper_variable_bounds)
-
                 # Initialize the visualizer
                 self._visualizer = Visualizer2D(
                     objective=solver.objective,
-                    bounds=bounds,
+                    bounds=self.plot_bounds,
                     dimensions=solver._number_of_variables)
 
             # Get the static parameters
@@ -202,6 +207,7 @@ class MonitorDLRCMAES:
                 # Update the interactive plot
                 self._visualizer.update(
                     iteration=solver._opt_iter,
+                    population=solver._population,
                     mean=solver._mean,
                     cov=solver._root_cov@solver._root_cov.T,
                     sigma=solver._sigma,
@@ -217,6 +223,11 @@ class MonitorDLRCMAES:
             self._record('best_fitness', min(solver._fitness))
             self._record('mean_fitness', mean(solver._fitness))
             self._record('worst_fitness', max(solver._fitness))
+
+            # Record the bound violation
+            self._record('max_bound_viol', max(solver._squared_bound_errors))
+            self._record('mean_bound_viol', mean(solver._squared_bound_errors))
+            self._record('gamma', solver._gamma)
 
             # Record the integrator rank
             self._record('int_rank', solver.integrator.rank)

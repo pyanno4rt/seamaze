@@ -1,11 +1,10 @@
-"""Rastrigin function."""
+"""Discus function."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
-from math import pi
-from numpy import asarray, cos, full, sin
+from numpy import asarray, full, zeros
 from numpy import sum as nsum
 
 # %% Internal package import
@@ -15,13 +14,13 @@ from seamaze.benchmarks import BenchmarkFunction
 # %% Class definition
 
 
-class Rastrigin(BenchmarkFunction):
+class Discus(BenchmarkFunction):
     """
-    Rastrigin function class.
+    Discus function class.
 
-    A highly multimodal function combining a parabolic global bowl with an
-    orthogonal grid of local cosine ripples that triggers immense local
-    trapping.
+    A poorly conditioned, unimodal benchmark function characterized by a flat,
+    disc-like shape. The first dimension is heavily penalized by 1e6, while all
+    other dimensions are smoothly scaled.
 
     Parameters
     ----------
@@ -39,16 +38,16 @@ class Rastrigin(BenchmarkFunction):
 
         # Initialize the superclass
         super().__init__(
-            name='Rastrigin',
+            name='Discus',
             ndim=ndim,
-            bounds=(full(ndim, -5.12), full(ndim, 5.12))
+            bounds=(full(ndim, -5.0), full(ndim, 5.0))
             )
 
     def __call__(
             self,
             x):
         """
-        Compute the Rastrigin function value.
+        Compute the discus function value.
 
         Parameters
         ----------
@@ -64,13 +63,19 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 10.0 * self.ndim + nsum(x**2 - 10.0 * cos(2.0 * pi * x))
+        # Check if the number of dimensions is smaller or equal to one
+        if self.ndim <= 1:
+
+            # Return the scaled sphere function value
+            return 1e6 * nsum(x**2)
+
+        return 1e6 * (x[0]**2) + nsum(x[1:]**2)
 
     def gradient(
             self,
             x):
         """
-        Compute the Rastrigin gradient.
+        Compute the discus gradient.
 
         Parameters
         ----------
@@ -86,4 +91,22 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 2.0 * x + 20.0 * pi * sin(2.0*pi*x)
+        # Check if the number of dimensions is zero
+        if self.ndim == 0:
+
+            # Return zeros
+            return zeros(0)
+
+        # Check if the number of dimensions is one
+        if self.ndim == 1:
+
+            # Return the scaled sphere gradient
+            return 2e6 * x
+
+        # Compute the uniform gradient
+        grad = 2.0 * x
+
+        # Adapt the first element
+        grad[0] = 2e6 * x[0]
+
+        return grad

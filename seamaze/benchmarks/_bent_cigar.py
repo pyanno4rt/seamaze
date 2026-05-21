@@ -1,10 +1,10 @@
-"""Sphere function."""
+"""Bent-Cigar function."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
-from numpy import asarray, full
+from numpy import asarray, full, zeros
 from numpy import sum as nsum
 
 # %% Internal package import
@@ -14,12 +14,13 @@ from seamaze.benchmarks import BenchmarkFunction
 # %% Class definition
 
 
-class Sphere(BenchmarkFunction):
+class BentCigar(BenchmarkFunction):
     """
-    Sphere function class.
+    Bent-Cigar function class.
 
-    A perfectly symmetrical, smooth, and unimodal parabolic bowl serving as the
-    baseline benchmark to measure an optimizer's maximum convergence speed.
+    A poorly conditioned, unimodal benchmark function characterized by an
+    extremely narrow, elongated cigar-like shape. Only the first dimension is
+    smoothly scaled, while all other dimensions are heavily penalized by 1e6.
 
     Parameters
     ----------
@@ -37,7 +38,7 @@ class Sphere(BenchmarkFunction):
 
         # Initialize the superclass
         super().__init__(
-            name='Sphere',
+            name='Bent-Cigar',
             ndim=ndim,
             bounds=(full(ndim, -5.0), full(ndim, 5.0))
             )
@@ -46,7 +47,7 @@ class Sphere(BenchmarkFunction):
             self,
             x):
         """
-        Compute the sphere function value.
+        Compute the Bent-Cigar function value.
 
         Parameters
         ----------
@@ -62,13 +63,19 @@ class Sphere(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return nsum(x**2)
+        # Check if the number of dimensions is smaller or equal to one
+        if self.ndim <= 1:
+
+            # Return the sphere function value
+            return nsum(x**2)
+
+        return x[0]**2 + 1e6 * nsum(x[1:]**2)
 
     def gradient(
             self,
             x):
         """
-        Compute the sphere gradient.
+        Compute the Bent-Cigar gradient.
 
         Parameters
         ----------
@@ -84,4 +91,22 @@ class Sphere(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 2.0 * x
+        # Check if the number of dimensions is zero
+        if self.ndim == 0:
+
+            # Return zeros
+            return zeros(0)
+
+        # Check if the number of dimensions is one
+        if self.ndim == 1:
+
+            # Return the sphere gradient
+            return 2.0 * x
+
+        # Compute the uniform gradient
+        grad = 2e6 * x
+
+        # Adapt the first element
+        grad[0] = 2.0 * x[0]
+
+        return grad

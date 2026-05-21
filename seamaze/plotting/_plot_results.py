@@ -13,14 +13,15 @@ from numpy import arange, array
 # %% Internal package import
 
 from seamaze.plotting import (
-    plot_fitness, plot_matrix_slices, plot_scatter, plot_series)
+    plot_bound_violations, plot_fitness, plot_matrix_slices, plot_scatter,
+    plot_series)
 
 # %% Plotting function
 
 
 def plot_results(
         data, label, show_objective=True, show_fitness=True,
-        show_step_size=True, show_mean_change_norm=True,
+        show_bound_viol=True, show_step_size=True, show_mean_change_norm=True,
         show_sigma_path_norm=True, show_cov_path_norm=True, show_cov_svs=True,
         show_cov_norm=True, show_cov_cn=True, show_cov_spectr_norm=True,
         show_integrator_rank=True, save_folder=None):
@@ -40,6 +41,9 @@ def plot_results(
 
     show_fitness : bool, default=True
         The indicator for plotting the fitness values.
+
+    show_bound_viol : bool, default=True
+        The indicator for plotting the bound violations.
 
     show_step_size : bool, default=True
         The indicator for plotting the step size.
@@ -126,6 +130,30 @@ def plot_results(
             ylabel='Value',
             save_path=get_path('fitness.pdf'))
 
+    # Check if the bound violations should be plotted
+    if show_bound_viol and all(key in data for key in (
+            'max_bound_viol', 'mean_bound_viol', 'gamma')):
+
+        # Plot the bound violation statistics
+        plot_bound_violations(
+            violation=[data['max_bound_viol'], data['mean_bound_viol']],
+            head=None,
+            semilog=False,
+            title=f'Sum of squared bound errors ({label})',
+            xlabel='Generation',
+            ylabel='Value',
+            save_path=get_path('squared_bound_viols.pdf'))
+
+        # Plot the gamma value (penalty factor)
+        plot_series(
+            series=data['gamma'],
+            head=None,
+            semilog=False,
+            title=f'Penalty factor ({label})',
+            xlabel='Generation',
+            ylabel='Value',
+            save_path=get_path('gamma.pdf'))
+
     # Check if the step size should be plotted
     if show_step_size and 'sigma' in data:
 
@@ -144,7 +172,7 @@ def plot_results(
 
         # Plot the mean change norm
         plot_series(
-            series=data['mean_change_norm'],
+            series=data['mean_change_norm'][1:],
             head=None,
             semilog=False,
             title=f'Mean change norm ({label})',

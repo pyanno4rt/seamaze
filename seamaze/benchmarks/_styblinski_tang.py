@@ -1,11 +1,10 @@
-"""Rastrigin function."""
+"""Styblinski-Tang function."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
-from math import pi
-from numpy import asarray, cos, full, sin
+from numpy import asarray, full
 from numpy import sum as nsum
 
 # %% Internal package import
@@ -15,13 +14,13 @@ from seamaze.benchmarks import BenchmarkFunction
 # %% Class definition
 
 
-class Rastrigin(BenchmarkFunction):
+class StyblinskiTang(BenchmarkFunction):
     """
-    Rastrigin function class.
+    Styblinski-Tang function class.
 
-    A highly multimodal function combining a parabolic global bowl with an
-    orthogonal grid of local cosine ripples that triggers immense local
-    trapping.
+    A smooth, non-separable landscape featuring an asymmetric multi-well
+    structure where the global minimum is surrounded by steep walls and
+    competing local basins.
 
     Parameters
     ----------
@@ -30,7 +29,8 @@ class Rastrigin(BenchmarkFunction):
 
     Notes
     -----
-    Global optimum: x=(0, 0, ..., 0), f(x)=0.
+    Global optimum: x=(-2.903534, -2.903534, ..., -2.903534), \
+    f(x)=-39.166165*n.
     """
 
     def __init__(
@@ -39,16 +39,16 @@ class Rastrigin(BenchmarkFunction):
 
         # Initialize the superclass
         super().__init__(
-            name='Rastrigin',
+            name='Styblinski-Tang',
             ndim=ndim,
-            bounds=(full(ndim, -5.12), full(ndim, 5.12))
+            bounds=(full(ndim, -5.0), full(ndim, 5.0))
             )
 
     def __call__(
             self,
             x):
         """
-        Compute the Rastrigin function value.
+        Compute the Styblinski-Tang function value.
 
         Parameters
         ----------
@@ -64,13 +64,13 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 10.0 * self.ndim + nsum(x**2 - 10.0 * cos(2.0 * pi * x))
+        return nsum(x**4 - 16.0 * (x**2) + 5.0 * x) / 2
 
     def gradient(
             self,
             x):
         """
-        Compute the Rastrigin gradient.
+        Compute the Styblinski-Tang gradient.
 
         Parameters
         ----------
@@ -86,4 +86,4 @@ class Rastrigin(BenchmarkFunction):
         # Ensure that the input is an array
         x = asarray(x)
 
-        return 2.0 * x + 20.0 * pi * sin(2.0*pi*x)
+        return 2.0 * (x**3) - 16.0 * x + 2.5

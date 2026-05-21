@@ -15,8 +15,12 @@ from numba import njit
 from numpy import (
     add, arange, argmin, argsort, array, clip, copyto, empty, exp, eye,
     fill_diagonal, float64, full, log, matmul, maximum, median, multiply, ones,
-    sqrt, take, zeros)
+    sqrt, take, where, zeros)
+from numpy import any as nany
+from numpy import max as nmax
+from numpy import min as nmin
 from numpy import sum as nsum
+from numpy.linalg import norm
 from numpy.random import default_rng
 from scipy.linalg import eigh
 
@@ -110,9 +114,6 @@ class DLRCMAES:
         the solver instance.
     """
 
-    # Initialize the logger
-    logger = Logging('DLR-CMA-ES', 'info')
-
     def __init__(
             self,
             number_of_variables,
@@ -134,6 +135,9 @@ class DLRCMAES:
             sigma_threshold=1e-3,
             update_interval=1,
             callback=None):
+
+        # Initialize the logger
+        self.logger = Logging('DLR-CMA-ES', 'debug')
 
         # Log a message about the initialization
         self.logger.info(
@@ -182,16 +186,41 @@ class DLRCMAES:
         self._pop_size += (2 if gradient is not None else 0)
         self._elite_size = self._pop_size // 2
 
-        # Initialize the weights and variance effective selection mass
-        base_weights = (
-            log(self._elite_size + 0.5) - log(arange(1, self._elite_size + 1))
+        # Initialize the base weights and variance effective selection mass
+        _base_weights = (
+            log((self._pop_size + 1) / 2) - log(arange(1, self._pop_size + 1))
             )
-        self._weights = base_weights / nsum(base_weights)
-        self._weights_2d = self._weights[:, None]
-        self._mu_eff = 1 / nsum(self._weights**2)
+        _bw_pos_sum = nsum(_base_weights[:self._elite_size])
+        _bw_neg_sum = nsum(_base_weights[self._elite_size+1:])
+
+        _mu_eff_neg = (
+            _bw_neg_sum**2 / nsum(_base_weights[self._elite_size+1:]**2)
+            )
+        self._mu_eff = (
+            _bw_pos_sum**2 / nsum(_base_weights[:self._elite_size]**2)
+            )
 
         # Initialize the learning rates, damping, and expected path length
         self._update_dynamics()
+
+        # Adjust the weights
+        _alpha_mu_neg = 1 + self._lr_rank_one / self._lr_rank_mu
+        _alpha_mu_eff_neg = 1 + (2 * _mu_eff_neg) / (self._mu_eff + 2)
+        _alpha_posdef_neg = (
+            (1 - self._lr_rank_one - self._lr_rank_mu)
+            / (self._number_of_variables * self._lr_rank_mu)
+            )
+        _alpha_min = min(_alpha_mu_neg, _alpha_mu_eff_neg, _alpha_posdef_neg)
+
+        self._weights = array([
+            (1 / _bw_pos_sum) * wi if wi > 0 else
+            -1*(_alpha_min / _bw_neg_sum) * wi
+            for wi in _base_weights])
+        self._weights_2d = self._weights[:, None]
+
+        # Initialize the bound/constraint handling parameters
+        self._squared_bound_errors = None
+        self._gamma = None
 
         # Initialize the adaptive variables
         self._wall_start = None
@@ -349,17 +378,19 @@ class DLRCMAES:
         elite_projection = self._elite_projection[:, :core_rank]
 
         core_matrix *= (
-            1 
-            - self._lr_rank_one 
+            1
+            - self._lr_rank_one
             - sum(self._weights[:self._elite_size])*self._lr_rank_mu
-        ) 
+            )
 
         # Add the rank-1 update
-        core_matrix += self._lr_rank_one * (path_cov_padded @ path_cov_padded.T)
+        core_matrix += self._lr_rank_one * (
+            path_cov_padded @ path_cov_padded.T)
 
         # Add the rank-mu update
         core_matrix += self._lr_rank_mu * (
-            elite_projection.T @ (self._weights_2d * elite_projection))
+            elite_projection.T @ (
+                self._weights_2d[:self._elite_size] * elite_projection))
 
         return core_matrix
 
@@ -397,7 +428,7 @@ class DLRCMAES:
             self._path_full.T @ projection_matrix))
 
         # Compute the weighted elite steps
-        multiply(self._weights_2d, self._elite_steps, out=self._weighted_steps)
+        multiply(self._weights_2d[:self._elite_size], self._elite_steps, out=self._weighted_steps)
 
         # Project the weighted steps
         matmul(
@@ -443,36 +474,48 @@ class DLRCMAES:
             natural_gradient = self._root_cov[:, :rank] @ (
                 self._root_cov[:, :rank].T @ gradient)
 
-            # Calculate the "energy" of the gradient in the subspace
-            gradient_energy = gradient @ natural_gradient
+            # Compute the rescaling factor
+            rescale = 1 / (sqrt(gradient @ natural_gradient) + 1e-15)
 
-            # Check if the gradient is non-orthogonal to the subspace
-            if gradient_energy > 1e-12:
+            # Compute the natural gradient step
+            gradient_step = natural_gradient * rescale
 
-                # Compute the rescaling factor
-                rescale = 1.0 / (sqrt(gradient_energy) + 1e-15)
+            # Add the mirrored gradient steps
+            self._steps[-2] = -gradient_step
+            self._steps[-1] = gradient_step
 
-                # Compute the natural gradient step
-                gradient_step = natural_gradient * rescale
+        else:
 
-                # Add the gradient steps (with mirroring)
-                self._steps[-2] = -gradient_step
-                self._steps[-1] = gradient_step
-
-            else:
-
-                # Fill the remaining samples randomly
-                self._steps[-2:] = (
-                    self._rng.standard_normal((2, rank))
-                    @ self._root_cov[:, :rank].T)
+            # Fill the remaining samples randomly
+            self._steps[-2:] = (
+                self._rng.standard_normal((2, rank))
+                @ self._root_cov[:, :rank].T)
 
         # Sample the new population
         add(self._mean, self._sigma * self._steps, out=self._population)
 
-        # Get the "feasible" population
-        clip(
-            self._population, a_min=self.lower_variable_bounds,
-            a_max=self.upper_variable_bounds, out=self._population)
+        # Compute the distance to the lower and upper bounds
+        eps_lower = maximum(0.0, self.lower_variable_bounds - self._population)
+        eps_upper = maximum(0.0, self._population - self.upper_variable_bounds)
+
+        # Sum the squared errors for each individual
+        self._squared_bound_errors = nsum((eps_lower + eps_upper) ** 2, axis=1)
+
+        # Mirror the violating individuals into the feasible region
+        self._population = where(
+            self._population < self.lower_variable_bounds,
+            self.lower_variable_bounds + eps_lower,
+            self._population
+        )
+        self._population = where(
+            self._population > self.upper_variable_bounds,
+            self.upper_variable_bounds - eps_upper,
+            self._population
+        )
+
+        # Enforce hard constraints to avoid numerical round-off errors
+        clip(self._population, a_min=self.lower_variable_bounds,
+             a_max=self.upper_variable_bounds, out=self._population)
 
     def evaluate(self):
         """
@@ -481,32 +524,60 @@ class DLRCMAES:
         Returns
         -------
         ndarray
-            Fitness values for the population.
+            Unpenalized fitness values for the population.
+
+        ndarray
+            Penalized fitness values for the population.
         """
 
-        # Compute the fitness values
-        fitness = array([
+        # Compute the unpenalized fitness values
+        true_fitness = array([
             self.objective(individual, track=False)
             for individual in self._population])
 
-        # Get the best fitness
-        best_index = argmin(fitness)
-        best_fitness = fitness[best_index]
+        # Check if the penalty factor has been initialized
+        if self._gamma is None:
+
+            # Compute the unpenalized fitness range
+            fitness_range = nmax(true_fitness) - nmin(true_fitness)
+
+            # Scale the penalty factor to the fitness range
+            self._gamma = (
+                (fitness_range if fitness_range > 1e-8 else 10.0) /
+                (self._number_of_variables + 1e-15)
+                )
+
+        # Compute the penalied fitness values
+        selection_fitness = (
+            true_fitness + self._gamma * self._squared_bound_errors
+            )
+
+        # Check if any bound violations occurred
+        any_errors = nany(self._squared_bound_errors > 0)
+
+        # Adapt the penalty factor
+        self._gamma = clip(
+            self._gamma * (1.1 * any_errors + 0.99 * (1 - any_errors)),
+            1e-5, 1e10)
+
+        # Get the best unpenalized fitness
+        best_index = argmin(selection_fitness)
+        true_best_fitness = true_fitness[best_index]
 
         # Append the best fitness to the history
-        self._fitness_history.append(best_fitness)
+        self._fitness_history.append(true_best_fitness)
 
         # Check if an improved solution has been found
-        if self._result['optimal_value'] - best_fitness > 0:
+        if self._result['optimal_value'] - true_best_fitness > 0:
 
             # Update the optimal value and point
-            self._result['optimal_value'] = best_fitness
+            self._result['optimal_value'] = true_best_fitness
             self._result['optimal_point'] = self._population[best_index].copy()
 
         # Re-evaluate the current best individual for tracking
         self.objective(self._result['optimal_point'])
 
-        return fitness
+        return true_fitness, selection_fitness
 
     def tell(
             self,
@@ -614,19 +685,22 @@ class DLRCMAES:
         rank = self.integrator.rank
 
         # Update the learning rates
-        self._lr_sigma = (self._mu_eff + 2) / (rank + self._mu_eff + 3)
-        self._lr_cov = 4 / (rank + 4)
-        self._lr_rank_one = (
-            2 * min(1, self._pop_size / 6) / ((rank + 1.3)**2 + self._mu_eff))
-        self._lr_rank_mu = (
-            2 * (self._mu_eff + 1/self._mu_eff - 2) /
-            ((rank + 2)**2 + self._mu_eff))
+        self._lr_sigma = (self._mu_eff + 2) / (rank + self._mu_eff + 5)
+        self._lr_cov = (
+            (4 + self._mu_eff/rank) / (rank + 4 + 2*self._mu_eff/rank)
+            )
+        self._lr_rank_one = 2 / ((rank + 1.3)**2 + self._mu_eff)
+        self._lr_rank_mu = (min(
+            1 - self._lr_rank_one,
+            2*((0.25 + self._mu_eff + 1/self._mu_eff - 2) /
+               ((rank+2)**2 + 2*self._mu_eff/2))
+            ))
         self._lr_mean = 1.0
 
         # Update the damping coefficient
         self._damp_sigma = (
             1
-            + 2*max(0, sqrt((self._mu_eff - 1) / (rank + 1)) - 1)
+            + 2*max(0, sqrt((self._mu_eff-1) / (rank+1)) - 1)
             + self._lr_sigma)
 
         # Initialize the expected path length
@@ -668,10 +742,10 @@ class DLRCMAES:
                 self.ask()
 
                 # Evaluate the population's fitness
-                self._fitness = self.evaluate()
+                self._fitness, selection_fitness = self.evaluate()
 
                 # "Tell" the algorithm to update its parameters
-                self.tell(self._fitness)
+                self.tell(selection_fitness)
 
                 # Check if a callback has been provided
                 if self._callback is not None:
@@ -747,6 +821,12 @@ class DLRCMAES:
 
             return True
 
+        # Check if the condition number of the covariance matrix explodes
+        if self._core_matrix.max() >= 10**14:
+
+            # Add the solver info
+            self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'
+
         # Check if the fitness history is non-empty
         if len(self._fitness_history) > 0:
 
@@ -806,7 +886,9 @@ def _tell(
     elite_indices = argsort(fitness)[:elite_size]
 
     # Initialize the elite mean step
-    elite_mean_step = weights @ steps[elite_indices]
+    elite_weights = weights[:elite_size].reshape(-1, 1)
+    elite_mean_step = nsum(
+        steps[elite_indices] * elite_weights, axis=0)
 
     # Calculate the inverse rooted eigenvalues
     inv_root_ev = 1.0 / (sqrt(ev) + 1e-15)
@@ -823,7 +905,7 @@ def _tell(
         * latent_step_whitened)
 
     # Get the norm of the step-size evolution path
-    ps_norm = sqrt(nsum(path_sigma**2))
+    ps_norm = norm(path_sigma)
 
     # Compute the update switch for the covariance matrix
     ps_exp = sqrt(1.0 - (1.0 - lr_sigma)**(2.0 * (opt_iter + 1)))
@@ -836,11 +918,8 @@ def _tell(
     # Precompute the coefficient
     coeff = update_switch * sqrt(lr_cov * (2.0 - lr_cov) * mu_eff)
 
-    # Loop over the latent mean step elements
-    for index, step in enumerate(latent_mean_step):
-
-        #
-        path_cov[index, 0] += coeff * step
+    # Update the evolution path element
+    path_cov[:, 0] += coeff * elite_mean_step
 
     # Update the mean
     mean += (lr_mean * sigma) * elite_mean_step
@@ -854,11 +933,5 @@ def _tell(
 
         # Clip to 1e-15
         sigma = 1e-15
-
-    # Else, check if the updated sigma is above 1.0
-    elif sigma > 1.0:
-
-        # Clip to 1.0
-        sigma = 1.0
 
     return sigma, elite_indices

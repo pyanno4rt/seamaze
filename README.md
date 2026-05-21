@@ -72,7 +72,7 @@ from seamaze.optimizers.low_rank import DLRCMAES
 | Name                           | Version                               |
 | -----------------------------: | :------------------------------------ |
 | `python`                       | <font size="3"> >=3.11, <4.0 </font>  |
-| `numpy`                        | <font size="3"> >=2.4.4 </font>       |
+| `numpy`                        | <font size="3"> >=2.4.6 </font>       |
 | `scipy`                        | <font size="3"> >=1.17.1 </font>      |
 | `numba`                        | <font size="3"> >=0.65.1 </font>      |
 | `matplotlib`                   | <font size="3"> >=3.10.9 </font>      |

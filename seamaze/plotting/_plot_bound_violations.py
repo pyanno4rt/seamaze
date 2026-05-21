@@ -1,32 +1,28 @@
-"""Matrix slices plotting."""
+"""Bound violation plotting."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 # %% External package import
 
 import matplotlib.pyplot as plt
-from numpy import linspace
 
 # %% Plotting function
 
 
-def plot_matrix_slices(
-        matrix, axis=0, step=1, semilog=False, title='', xlabel='', ylabel='',
-        save_path=None):
+def plot_bound_violations(
+        violation, head=None, semilog=False, title='', xlabel='',
+        ylabel='', save_path=None):
     """
-    Plot 1-D matrix slices.
+    Plot the bound violation evolution (max and mean) over the iterations.
 
     Parameters
     ----------
-    matrix : ndarray
-        The 2D input matrix.
+    violation : list
+        List containing two 1D arrays or sequences corresponding to
+        [max, mean] bound violation values.
 
-    axis : {0, 1}, default=0
-        The axis along which the matrix is sliced. If 0, the function \
-        iterates over the columns, else over the rows.
-
-    step : int, default=1
-        The sampling interval for data points within the slice.
+    head : None or int, default=None
+        The number of initial data points to plot in each violation series.
 
     semilog : bool, default=False
         The indicator for logarithmic scaling (base 10) on the y-axis.
@@ -62,33 +58,29 @@ def plot_matrix_slices(
     # Create the figure
     _, ax = plt.subplots(figsize=(8, 6))
 
-    # Transpose the matrix if row-wise slicing should be applied
-    matrix = matrix.T if axis == 0 else matrix
+    # Truncate the violations series
+    violation = [
+        series[:head] if head is not None else series for series in violation]
 
-    # Generate the color set
-    colors = plt.cm.viridis(linspace(0, 1, matrix.shape[0]))
+    # Define the labels and colors
+    labels = ['Max', 'Mean']
+    colors = ['#1f77b4', '#ff7f0e']
 
-    # Loop over the matrix slices
-    for index, mslice in enumerate(matrix):
+    # Define the marker style and line width
+    series_length = len(violation[0])
+    marker_style = '.' if series_length < 50 else None
+    line_width = 0.75
 
-        # Select values from the slice
-        series = mslice[::step]
+    # Get the plot function
+    plot_func = ax.semilogy if semilog else ax.plot
 
-        # Get the index set
-        indices = range(0, len(mslice), step)
+    # Loop over the fitness series and styles
+    for series, label, color in zip(violation, labels, colors):
 
-        # Define the marker style and line width
-        marker_style = '.' if len(series) < 50 else None
-        line_width = 0.75
-
-        # Get the plot function
-        plot_func = ax.semilogy if semilog else ax.plot
-
-        # Plot the line
+        # Plot the fitness line
         plot_func(
-            indices, series, marker=marker_style, markersize=3,
-            linestyle='-', linewidth=line_width, alpha=0.8, color=colors[index]
-            )
+            series, marker=marker_style, markersize=3, linestyle='-',
+            linewidth=line_width, color=color, label=label, alpha=0.9)
 
     # Check if a title has been provided
     if title:
@@ -99,6 +91,9 @@ def plot_matrix_slices(
     # Set the axis labels
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
+
+    # Add a legend
+    ax.legend(loc='best', frameon=True, fancybox=False, edgecolor='black')
 
     # Add a grid
     ax.grid(True, which="both", ls=":", alpha=0.5, color='0.6')

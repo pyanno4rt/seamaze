@@ -14,12 +14,18 @@ class BenchmarkFunction:
     name : str
         Name of the function.
 
+    ndim : int
+        Number of dimensions.
+
     bounds : tuple
         Lower and upper variable bounds.
 
     Attributes
     ----------
     name : str
+        See 'Parameters'.
+
+    ndim : int
         See 'Parameters'.
 
     bounds : tuple
@@ -29,10 +35,12 @@ class BenchmarkFunction:
     def __init__(
             self,
             name,
+            ndim,
             bounds):
 
         # Get the arguments
         self.name = name
+        self.ndim = ndim
         self.bounds = bounds
 
     def __call__(

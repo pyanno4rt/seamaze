@@ -5,10 +5,9 @@
 # %% External package import
 
 from numpy import (
-    argsort, clip, copyto, diag, eye, float64, matmul, maximum, sqrt, zeros)
+    clip, copyto, diag, eye, float64, matmul, maximum, zeros)
 from numpy import sum as nsum
 from numpy.linalg import pinv, svd, trace
-from numpy.random import default_rng
 from scipy.linalg import qr
 
 # %% Dynamical low-rank integrator class
