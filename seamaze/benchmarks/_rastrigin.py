@@ -19,9 +19,8 @@ class Rastrigin(BenchmarkFunction):
     """
     Rastrigin function class.
 
-    A highly multimodal function combining a parabolic global bowl with an
-    orthogonal grid of local cosine ripples that triggers immense local
-    trapping.
+    A highly multimodal, separable landscape defined by a frequent cosine
+    modulation superposed on a parabolic baseline.
 
     Parameters
     ----------

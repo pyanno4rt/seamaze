@@ -3,7 +3,7 @@ Benchmarks module.
 
 ==================================================================
 
-This module aims to provide methods and classes for benchmarking the \
+This module aims to provide methods and classes for benchmarking the
 implemented algorithms.
 """
 

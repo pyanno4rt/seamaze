@@ -191,30 +191,30 @@ class DLRCMAES:
             log((self._pop_size + 1) / 2) - log(arange(1, self._pop_size + 1))
             )
         _bw_pos_sum = nsum(_base_weights[:self._elite_size])
-        _bw_neg_sum = nsum(_base_weights[self._elite_size+1:])
+        _bw_neg_sum = nsum(_base_weights[self._elite_size:])
 
-        _mu_eff_neg = (
-            _bw_neg_sum**2 / nsum(_base_weights[self._elite_size+1:]**2)
-            )
         self._mu_eff = (
             _bw_pos_sum**2 / nsum(_base_weights[:self._elite_size]**2)
+            )
+        _mu_eff_neg = (
+            _bw_neg_sum**2 / nsum(_base_weights[self._elite_size:]**2)
             )
 
         # Initialize the learning rates, damping, and expected path length
         self._update_dynamics()
 
         # Adjust the weights
-        _alpha_mu_neg = 1 + self._lr_rank_one / self._lr_rank_mu
-        _alpha_mu_eff_neg = 1 + (2 * _mu_eff_neg) / (self._mu_eff + 2)
+        _alpha_mu_neg = 1.0 + self._lr_rank_one / self._lr_rank_mu
+        _alpha_mu_eff_neg = 1.0 + (2.0 * _mu_eff_neg) / (self._mu_eff + 2.0)
         _alpha_posdef_neg = (
-            (1 - self._lr_rank_one - self._lr_rank_mu)
+            (1.0 - self._lr_rank_one - self._lr_rank_mu)
             / (self._number_of_variables * self._lr_rank_mu)
             )
         _alpha_min = min(_alpha_mu_neg, _alpha_mu_eff_neg, _alpha_posdef_neg)
 
         self._weights = array([
-            (1 / _bw_pos_sum) * wi if wi > 0 else
-            -1*(_alpha_min / _bw_neg_sum) * wi
+            (1.0 / _bw_pos_sum) * wi if wi > 0.0 else
+            (_alpha_min / abs(_bw_neg_sum)) * wi
             for wi in _base_weights])
         self._weights_2d = self._weights[:, None]
 
@@ -422,6 +422,9 @@ class DLRCMAES:
         matmul(
             self._left_basis[:, :rank_cma], self._path_cov, out=self._path_full
             )
+
+        #
+        target_matrix *= (1 - self._lr_rank_one - self._lr_rank_mu)
 
         # Add the rank-1 update
         target_matrix += self._lr_rank_one * (self._path_full @ (

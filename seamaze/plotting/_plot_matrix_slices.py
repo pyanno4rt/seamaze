@@ -5,7 +5,7 @@
 # %% External package import
 
 import matplotlib.pyplot as plt
-from numpy import linspace
+from numpy import asarray, linspace
 
 # %% Plotting function
 
@@ -44,81 +44,86 @@ def plot_matrix_slices(
         The file path where the figure should be saved.
     """
 
-    # Set the style parameters
-    plt.rcParams.update({
-        "text.usetex": False,
-        "font.family": 'sans-serif',
-        "font.serif": ['Helvetica', 'Arial', 'DejaVu Sans', 'Liberation Sans'],
-        "axes.labelsize": 10,
-        "font.size": 10,
-        "legend.fontsize": 9,
-        "xtick.labelsize": 9,
-        "ytick.labelsize": 9,
-        "axes.labelweight": 'normal',
-        "pdf.fonttype": 42,
-        "ps.fonttype": 42
-        })
+    # Ensure the input is an array
+    matrix = asarray(matrix)
 
-    # Create the figure
-    _, ax = plt.subplots(figsize=(8, 6))
+    # Check if the matrix is empty or less than 2-dimensional
+    if matrix.size == 0 or matrix.ndim < 2:
 
-    # Transpose the matrix if row-wise slicing should be applied
-    matrix = matrix.T if axis == 0 else matrix
+        return
 
-    # Generate the color set
-    colors = plt.cm.viridis(linspace(0, 1, matrix.shape[0]))
+    # Run the plotting steps with contextual rcParams
+    with plt.rc_context({'pdf.fonttype': 42, 'ps.fonttype': 42}):
 
-    # Loop over the matrix slices
-    for index, mslice in enumerate(matrix):
+        # Create the figure
+        fig, ax = plt.subplots(figsize=(8, 6))
 
-        # Select values from the slice
-        series = mslice[::step]
+        # Transpose the matrix if column-wise slicing should be applied
+        matrix = matrix.T if axis == 0 else matrix
 
-        # Get the index set
-        indices = range(0, len(mslice), step)
+        # Generate the color set
+        colors = plt.cm.viridis(linspace(0, 1, matrix.shape[0]))
 
-        # Define the marker style and line width
-        marker_style = '.' if len(series) < 50 else None
-        line_width = 0.75
+        # Loop over the matrix slices
+        for index, mslice in enumerate(matrix):
 
-        # Get the plot function
-        plot_func = ax.semilogy if semilog else ax.plot
+            # Select values from the slice
+            series = mslice[::step]
 
-        # Plot the line
-        plot_func(
-            indices, series, marker=marker_style, markersize=3,
-            linestyle='-', linewidth=line_width, alpha=0.8, color=colors[index]
+            # Get the index set
+            indices = range(1, len(mslice) + 1, step)
+
+            # Define the marker style and size
+            marker_style = (
+                'o' if len(series) < 30 else
+                ('.' if len(series) < 100 else None)
+                )
+
+            # Get the plot function
+            plot_func = ax.semilogy if semilog else ax.plot
+
+            # Plot the line
+            plot_func(
+                indices, series, marker=marker_style, markersize=3,
+                linestyle='-', linewidth=0.75, alpha=0.8, color=colors[index]
+                )
+
+        # Check if a title has been provided
+        if title:
+
+            # Set the title
+            ax.set_title(title, fontweight='bold', fontsize=12)
+
+        # Set the axis labels
+        ax.set_xlabel(xlabel, fontsize=10)
+        ax.set_ylabel(
+            f"{ylabel} (log scale)" if semilog else ylabel, fontsize=10
             )
 
-    # Check if a title has been provided
-    if title:
+        # Set the tick params
+        ax.tick_params(axis='both', labelsize=9)
 
-        # Set the title
-        ax.set_title(title, fontweight='bold')
+        # Add a grid
+        ax.grid(True, which="both", ls=":", alpha=0.5, color='0.6')
 
-    # Set the axis labels
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
+        # Apply a tight layout
+        plt.tight_layout(pad=0.5)
 
-    # Add a grid
-    ax.grid(True, which="both", ls=":", alpha=0.5, color='0.6')
+        # Check if the figure should be saved
+        if save_path:
 
-    # Apply a tight layout
-    plt.tight_layout(pad=0.5)
+            # Save the figure
+            plt.savefig(
+                save_path, bbox_inches='tight', dpi=300, transparent=True
+                )
 
-    # Check if the figure should be saved
-    if save_path:
+            # Close the figure
+            plt.close(fig)
 
-        # Save the figure
-        plt.savefig(save_path, bbox_inches='tight', dpi=300, transparent=True)
+        else:
 
-        # Close the figure
-        plt.close()
+            # Show the figure
+            plt.show(block=True)
 
-    else:
-
-        # Show the figure
-        plt.show(block=True)
-
-        # Close the figure
-        plt.close()
+            # Close the figure
+            plt.close(fig)

@@ -18,9 +18,8 @@ class LinearSlope(BenchmarkFunction):
     """
     Linear slope function class.
 
-    A strictly linear, non-separable function featuring a constant
-    directional gradient that forces the optimizer to slide down a smooth,
-    endless slope toward the boundaries of the search space.
+    A continuous, strictly linear hyper-surface characterized by a constant
+    directional gradient across all parameter dimensions.
 
     Parameters
     ----------

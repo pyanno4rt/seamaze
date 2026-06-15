@@ -3,8 +3,8 @@ Diagnostics module.
 
 ==================================================================
 
-This module aims to provide methods and classes for diagnosing the \
-implemented algorithms.
+This module aims to provide methods and classes for analyzing, debugging and
+diagnosing the behavior of the implemented algorithms.
 """
 
 # Author: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer

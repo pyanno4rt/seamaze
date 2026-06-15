@@ -18,8 +18,7 @@ class Sphere(BenchmarkFunction):
     """
     Sphere function class.
 
-    A perfectly symmetrical, smooth, and unimodal parabolic bowl serving as the
-    baseline benchmark to measure an optimizer's maximum convergence speed.
+    A strictly convex, continuous, and unimodal quadratic hyper-surface.
 
     Parameters
     ----------

@@ -18,9 +18,9 @@ class RotatedEllipsoid(BenchmarkFunction):
     """
     Rotated ellipsoid function class.
 
-    An ill-conditioned function where a coordinate rotation matrix misaligns
-    the exponentially scaled parabolic axes, preventing coordinate-wise
-    optimization.
+    A continuous, convex, and unimodal quadratic hyper-surface exhibiting
+    significant ill-conditioning induced by cumulative variable dependencies
+    that act as an implicit coordinate rotation.
 
     Parameters
     ----------

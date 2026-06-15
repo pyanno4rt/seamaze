@@ -18,9 +18,9 @@ class Discus(BenchmarkFunction):
     """
     Discus function class.
 
-    A poorly conditioned, unimodal benchmark function characterized by a flat,
-    disc-like shape. The first dimension is heavily penalized by 1e6, while all
-    other dimensions are smoothly scaled.
+    A poorly conditioned, unimodal function characterized by a flat, disc-like
+    shape. The first dimension is heavily penalized by 1e6, while all other
+    dimensions are smoothly scaled.
 
     Parameters
     ----------

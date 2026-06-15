@@ -1,4 +1,4 @@
-"""Function compatibilizer."""
+"""Function signature compatibilizer."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
@@ -7,64 +7,64 @@
 from functools import wraps
 from inspect import signature, Parameter
 
-# %% Compatibilizer function
+# %% Function definition
 
 
 def make_compat(func):
     """
-    Ensure compatibility of an objective function with specific signature.
+    Ensure signature compatibility of a callable by filtering excess arguments.
 
     Parameters
     ----------
-    func : Callable
-        The objective function to be wrapped.
+    func : Callable or None
+        The function to be adapted for signature compatibility.
 
     Returns
     -------
-    Callable, optional
-        A wrapped version of the function that only gets supported arguments.
+    Callable or None
+        The wrapped robust function, or None if the input was None.
     """
 
-    # Check if no function has been provided
+    # Check if None has been passed
     if func is None:
 
         return None
 
-    # Get the function signature and parameter list
+    # Get the signature of the function
     sig = signature(func)
     parameters = list(sig.parameters.values())
 
-    # Pre-calculate if the function accepts variable arguments
+    # Check for variable (key-worded) arguments (*args and **kwargs)
     has_args = any(
         parameter.kind == Parameter.VAR_POSITIONAL for parameter in parameters)
     has_kwargs = any(
         parameter.kind == Parameter.VAR_KEYWORD for parameter in parameters)
 
+    # Determine the allowed number of additional positional arguments
+    num_pos = sum(
+        1 for parameter in parameters if parameter.kind in (
+            Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD)
+        )
+    max_extra_args = max(0, num_pos - 1)
+
     @wraps(func)
     def safe_call(x, *args, **kwargs):
-        """Call the wrapped function with compatible arguments."""
+        """Call the wrapped function with compliant filtered arguments."""
 
-        # Check if no variable arguments are included
+        # Check if the function does not support *args
         if not has_args:
 
-            # Get the number of variable arguments
-            arg_count = sum(
-                1 for parameter in parameters
-                if parameter.kind in (
-                        Parameter.POSITIONAL_ONLY,
-                        Parameter.POSITIONAL_OR_KEYWORD)
-                )
+            # Slice the arguments
+            args = args[:max_extra_args]
 
-            # Get the variable arguments
-            args = args[:arg_count]
-
-        # Check if no variable keyworded arguments are included
+        # Check if the function does not support *kwargs
         if not has_kwargs:
 
-            # Get the variable keyworded arguments
-            kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+            # Filter unknown keyword arguments
+            kwargs = {
+                key: value for key, value in kwargs.items()
+                if key in sig.parameters}
 
-        # Return the function with filtered arguments
         return func(x, *args, **kwargs)
 
     return safe_call

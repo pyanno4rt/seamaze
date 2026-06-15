@@ -20,9 +20,9 @@ class Schwefel(BenchmarkFunction):
     """
     Schwefel (2.26) function class.
 
-    A deceptive, multimodal landscape where the global optimum is far from
-    local traps, forcing algorithms to cross massive barriers to avoid
-    premature convergence.
+    A highly multimodal and deceptive landscape where the global optimum is
+    geometrically distant from the best local minima, separated by wide,
+    high-penalty basins.
 
     Parameters
     ----------

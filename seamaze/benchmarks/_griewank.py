@@ -18,9 +18,8 @@ class Griewank(BenchmarkFunction):
     """
     Griewank function class.
 
-    A highly multimodal function combining a parabolic global landscape with a
-    high-frequency cosine grid that creates a vast number of widespread local
-    minima.
+    A non-linear, multimodal landscape defined by a global parabolic profile
+    multi-fractionally perturbed by a high-frequency cosine product term.
 
     Parameters
     ----------

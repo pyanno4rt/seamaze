@@ -18,9 +18,9 @@ class Ellipsoid(BenchmarkFunction):
     """
     Ellipsoid function class.
 
-    A highly ill-conditioned, non-separable convex function featuring a
-    parabolic landscape with exponentially increasing stiffness along the
-    coordinate axes toward a single global minimum.
+    A strictly convex and unimodal quadratic hyper-surface characterized by
+    severe ill-conditioning, where the scaling coefficients increase
+    exponentially across the parameter dimensions.
 
     Parameters
     ----------

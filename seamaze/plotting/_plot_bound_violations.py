@@ -5,6 +5,7 @@
 # %% External package import
 
 import matplotlib.pyplot as plt
+from numpy import asarray
 
 # %% Plotting function
 
@@ -40,80 +41,86 @@ def plot_bound_violations(
         The file path where the figure should be saved.
     """
 
-    # Set the style parameters
-    plt.rcParams.update({
-        "text.usetex": False,
-        "font.family": 'sans-serif',
-        "font.serif": ['Helvetica', 'Arial', 'DejaVu Sans', 'Liberation Sans'],
-        "axes.labelsize": 10,
-        "font.size": 10,
-        "legend.fontsize": 9,
-        "xtick.labelsize": 9,
-        "ytick.labelsize": 9,
-        "axes.labelweight": 'normal',
-        "pdf.fonttype": 42,
-        "ps.fonttype": 42
-        })
+    # Truncate the violation series
+    violation = [asarray(series)[:head] for series in violation]
 
-    # Create the figure
-    _, ax = plt.subplots(figsize=(8, 6))
+    # Check if the series contains no data
+    if len(violation) == 0 or len(violation[0]) == 0:
 
-    # Truncate the violations series
-    violation = [
-        series[:head] if head is not None else series for series in violation]
+        return
 
-    # Define the labels and colors
-    labels = ['Max', 'Mean']
-    colors = ['#1f77b4', '#ff7f0e']
+    # Run the plotting steps with contextual rcParams
+    with plt.rc_context({'pdf.fonttype': 42, 'ps.fonttype': 42}):
 
-    # Define the marker style and line width
-    series_length = len(violation[0])
-    marker_style = '.' if series_length < 50 else None
-    line_width = 0.75
+        # Create the figure
+        fig, ax = plt.subplots(figsize=(8, 6))
 
-    # Get the plot function
-    plot_func = ax.semilogy if semilog else ax.plot
+        # Define the labels and colors
+        labels = ['Max', 'Mean']
+        colors = ['#1f77b4', '#ff7f0e']
 
-    # Loop over the fitness series and styles
-    for series, label, color in zip(violation, labels, colors):
+        # Define the marker style and size
+        series_length = len(violation[0])
+        marker_style = (
+            'o' if series_length < 30 else
+            ('.' if series_length < 100 else None)
+            )
 
-        # Plot the fitness line
-        plot_func(
-            series, marker=marker_style, markersize=3, linestyle='-',
-            linewidth=line_width, color=color, label=label, alpha=0.9)
+        # Get the plot function
+        plot_func = ax.semilogy if semilog else ax.plot
 
-    # Check if a title has been provided
-    if title:
+        # Loop over the fitness series and styles
+        for series, label, color in zip(violation, labels, colors):
 
-        # Set the title
-        ax.set_title(title, fontweight='bold')
+            # Plot the fitness line
+            plot_func(
+                range(1, len(series) + 1), series, marker=marker_style,
+                markersize=3, linestyle='-', linewidth=0.75, color=color,
+                label=label, alpha=0.9
+                )
 
-    # Set the axis labels
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
+        # Check if a title has been provided
+        if title:
 
-    # Add a legend
-    ax.legend(loc='best', frameon=True, fancybox=False, edgecolor='black')
+            # Set the title
+            ax.set_title(title, fontweight='bold', fontsize=12)
 
-    # Add a grid
-    ax.grid(True, which="both", ls=":", alpha=0.5, color='0.6')
+        # Set the axis labels
+        ax.set_xlabel(xlabel, fontsize=10)
+        ax.set_ylabel(
+            f"{ylabel} (log scale)" if semilog else ylabel, fontsize=10
+            )
 
-    # Apply a tight layout
-    plt.tight_layout(pad=0.5)
+        # Set the tick params
+        ax.tick_params(axis='both', labelsize=9)
 
-    # Check if the figure should be saved
-    if save_path:
+        # Add a legend
+        ax.legend(
+            loc='best', frameon=True, fancybox=False, edgecolor='black',
+            fontsize=9
+            )
 
-        # Save the figure
-        plt.savefig(save_path, bbox_inches='tight', dpi=300, transparent=True)
+        # Add a grid
+        ax.grid(True, which="both", ls=":", alpha=0.5, color='0.6')
 
-        # Close the figure
-        plt.close()
+        # Apply a tight layout
+        plt.tight_layout(pad=0.5)
 
-    else:
+        # Check if the figure should be saved
+        if save_path:
 
-        # Show the figure
-        plt.show(block=True)
+            # Save the figure
+            plt.savefig(
+                save_path, bbox_inches='tight', dpi=300, transparent=True
+                )
 
-        # Close the figure
-        plt.close()
+            # Close the figure
+            plt.close(fig)
+
+        else:
+
+            # Show the figure
+            plt.show(block=True)
+
+            # Close the figure
+            plt.close(fig)

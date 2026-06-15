@@ -18,8 +18,9 @@ class Rosenbrock(BenchmarkFunction):
     """
     Rosenbrock function class.
 
-    A notoriously deceptive function featuring a long, narrow, and curved
-    parabolic valley that forces optimizers to perform slow, coordinated steps.
+    A non-linear, non-convex landscape characterized by a narrow, parabolic
+    valley where the gradient vectors point almost orthogonal to the ridge
+    line.
 
     Parameters
     ----------

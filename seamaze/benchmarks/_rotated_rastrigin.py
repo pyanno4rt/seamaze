@@ -20,8 +20,9 @@ class RotatedRastrigin(BenchmarkFunction):
     """
     Rotated Rastrigin function class.
 
-    A highly multimodal function where an orthogonal rotation completely skews
-    the local cosine ripples, eliminating all coordinate-wise separability.
+    A highly multimodal and non-separable landscape defined by a regular
+    cosine modulation superposed on a parabolic baseline and transformed via
+    an orthogonal matrix.
 
     Parameters
     ----------

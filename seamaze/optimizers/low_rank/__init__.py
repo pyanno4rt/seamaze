@@ -11,7 +11,9 @@ matrix adaptation evolutionary algorithms.
 
 from seamaze.optimizers.low_rank._low_rank_integrator import LowRankIntegrator
 from seamaze.optimizers.low_rank._dlrcmaes import DLRCMAES
+from seamaze.optimizers.low_rank._lmcmaes import LMCMAES
 
 __all__ = [
     'LowRankIntegrator',
-    'DLRCMAES']
+    'DLRCMAES',
+    'LMCMAES']

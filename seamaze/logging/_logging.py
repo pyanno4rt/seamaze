@@ -17,7 +17,7 @@ class Logging():
     """
     Logging class.
 
-    This class provides methods to configure a logging instance, including \
+    This class provides methods to configure a logging instance, including
     multiple stream handlers and formatters to print log messages.
 
     Parameters
@@ -26,8 +26,8 @@ class Logging():
         Label of the algorithm.
 
     min_log_level : {'debug', 'info', 'warning', 'error', 'critical'}
-        Minimum logging level for broadcasting messages to the console \
-        and the object streams.
+        Minimum logging level for broadcasting messages to the console and the
+        object streams.
 
     Attributes
     ----------
@@ -39,6 +39,9 @@ class Logging():
 
     logger : object of class :class:`~logging.Logger`
         The object used to interface the logging methods.
+
+    text_stream : object of class :class:`~io.StringIO`
+        In-memory stream buffer holding the captured log history.
     """
 
     def __init__(
@@ -49,6 +52,9 @@ class Logging():
         # Get the input attributes
         self.label = label
         self.min_log_level = min_log_level
+
+        # Initialize the text stream
+        self.text_stream = StringIO()
 
         # Initialize the logger
         self.logger = self.initialize(
@@ -89,8 +95,8 @@ class Logging():
             Name of the logger.
 
         min_log_level : {'debug', 'info', 'warning', 'error', 'critical'}
-            Minimum logging level for broadcasting messages to the console \
-            and the object streams.
+            Minimum logging level for broadcasting messages to the console and
+            the object streams.
 
         Returns
         -------
@@ -109,17 +115,10 @@ class Logging():
 
         # Initialize the console stream handler
         console_stream_handler = StreamHandler()
-
-        # Set the logging level for the console stream handler
         console_stream_handler.setLevel(level=min_log_level.upper())
 
-        # Initialize the text IO object
-        text_stream = StringIO()
-
         # Initialize the text IO stream handler
-        text_stream_handler = StreamHandler(stream=text_stream)
-
-        # Set the logging level for the text IO stream handler
+        text_stream_handler = StreamHandler(stream=self.text_stream)
         text_stream_handler.setLevel(level=min_log_level.upper())
 
         # Initialize the output formatter
@@ -149,12 +148,15 @@ class Logging():
         Parameters
         ----------
         min_log_level : {'debug', 'info', 'warning', 'error', 'critical'}
-            Minimum logging level for broadcasting messages to the console \
-            and the object streams.
+            Minimum logging level for broadcasting messages to the console and
+            the object streams.
         """
 
         # Overwrite the attribute
         self.min_log_level = min_log_level
+
+        # Set the logging level for the global logger
+        self.logger.setLevel(level=min_log_level.upper())
 
         # Loop over the handlers
         for handler in self.logger.handlers:
@@ -162,14 +164,27 @@ class Logging():
             # Set the logging level
             handler.setLevel(level=min_log_level.upper())
 
+    def export(self):
+        """
+        Export the saved log history.
+
+        Returns
+        -------
+        str
+            The log history as a formatted string.
+        """
+
+        # Return the current content of the internal StringIO stream
+        return self.text_stream.getvalue()
+
     def to_console(
             self,
             level,
             formatted_string,
             *args):
         """
-        Call the display function specified by `level` for the message \
-        given by `formatted_string`.
+        Call the display function specified by `level` for the message given
+        by `formatted_string`.
 
         Parameters
         ----------
@@ -183,16 +198,8 @@ class Logging():
             Optional display parameters.
         """
 
-        # Map the values of 'level' to the logging methods
-        logging_methods = {
-            'debug': self.logger.debug,
-            'info': self.logger.info,
-            'warning': self.logger.warning,
-            'error': self.logger.error,
-            'critical': self.logger.critical}
-
         # Run the selected logging method
-        logging_methods[level](formatted_string, *args)
+        getattr(self.logger, level.lower())(formatted_string, *args)
 
     def debug(
             self,

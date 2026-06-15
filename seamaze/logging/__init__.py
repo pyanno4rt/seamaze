@@ -3,8 +3,8 @@ Logging module.
 
 ==================================================================
 
-This module aims to provide methods and classes to track events during \
-seamaze execution cycles.
+This module aims to provide methods and classes to monitor and log events
+during the execution cycles of seamaze.
 """
 
 # Author: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer

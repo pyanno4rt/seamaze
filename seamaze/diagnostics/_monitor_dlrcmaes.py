@@ -4,7 +4,7 @@
 
 # %% External package import
 
-from numpy import diag, mean
+from numpy import diag, mean, ndarray
 from numpy.linalg import norm
 
 # %% Internal package import
@@ -37,33 +37,6 @@ class MonitorDLRCMAES:
     delay : int or float, default=0.001
         The time of delay for interactive plotting (in seconds). Only used if \
         mode is set to 'interactive'.
-
-    Attributes
-    ----------
-    interval : int
-        See 'Parameters'.
-
-    mode : {'interactive', 'silent'}
-        See 'Parameters'.
-
-    plot_bounds : tuple, list or ndarray, default=None
-        See 'Parameters'.
-
-    delay : int or float
-        See 'Parameters'.
-
-    _visualizer : object of class \
-        :class:`~seamaze.plotting._visualizer_cmaes.VisualizerCMAES`
-        The object used to interactively plot the tracked results.
-
-    _data : dict
-        Dictionary with the tracked parameters.
-
-    _counter : int
-        Internal counter.
-
-    _last_mean : ndarray
-        Cache for the mean vector.
     """
 
     def __init__(
@@ -73,16 +46,14 @@ class MonitorDLRCMAES:
             plot_bounds=None,
             delay=0.001):
 
-        # Initialize the interval
+        # Get the arguments
         self.interval = interval
-
-        # Initialize the visualization attributes
         self.mode = mode
         self.plot_bounds = plot_bounds
-        self._visualizer = None
-
-        # Initialize the delay
         self.delay = delay
+
+        # Initialize the visualizer
+        self._visualizer = None
 
         # Initialize the data dictionary
         self._data = {}
@@ -91,7 +62,7 @@ class MonitorDLRCMAES:
         self._counter = 0
 
         # Initialize the last mean vector
-        self._last_mean = 0
+        self._last_mean = None
 
     @property
     def data(self):
@@ -116,26 +87,22 @@ class MonitorDLRCMAES:
         """
 
         # Copy the value if it is an array
-        value = value.copy() if hasattr(value, 'copy') else value
+        value = (
+            value.copy()
+            if hasattr(value, 'copy') or isinstance(value, ndarray)
+            else value
+            )
 
         # Check if the key is not available yet
         if key not in self._data:
 
-            # Add the key/value pair
-            self._data[key] = value
+            # Add the key-value pair
+            self._data[key] = [value]
 
         else:
 
-            # Check if the value is not a list
-            if not isinstance(self._data[key], list):
-
-                # Expand the value into a list
-                self._data[key] = [self._data[key], value]
-
-            else:
-
-                # Append the value
-                self._data[key].append(value)
+            # Append the value
+            self._data[key].append(value)
 
     def base(
             self,
@@ -163,7 +130,8 @@ class MonitorDLRCMAES:
                 self._visualizer = Visualizer2D(
                     objective=solver.objective,
                     bounds=self.plot_bounds,
-                    dimensions=solver._number_of_variables)
+                    dimensions=solver._number_of_variables,
+                    pop_size=solver._pop_size)
 
             # Get the static parameters
             parameters = {
@@ -198,6 +166,9 @@ class MonitorDLRCMAES:
                 # Record the key/value pair
                 self._record(key, value)
 
+            # Copy the initial mean
+            self._last_mean = solver._mean.copy()
+
         # Check if the data should be updated
         if self._counter % self.interval == 0:
 
@@ -211,7 +182,9 @@ class MonitorDLRCMAES:
                     mean=solver._mean,
                     cov=solver._root_cov@solver._root_cov.T,
                     sigma=solver._sigma,
-                    fitness=solver._result['optimal_value'].item(),
+                    fitness=solver._fitness,
+                    squared_bound_errors=solver._squared_bound_errors,
+                    best_fitness=solver._result['optimal_value'].item(),
                     delay=self.delay)
 
             # Record the iteration and the current best objective value
@@ -274,3 +247,44 @@ class MonitorDLRCMAES:
             # Record the evolution path norms
             self._record('path_sigma_norm', norm(solver._path_sigma).item())
             self._record('path_cov_norm', norm(solver._path_cov).item())
+
+    def __enter__(self):
+        """Enter the runtime context and return the monitor object."""
+
+        return self
+
+    def __exit__(
+            self,
+            exc_type,
+            exc_val,
+            exc_tb):
+        """
+        Exit the runtime context and hold the interactive plot.
+
+        Parameters
+        ----------
+        exc_type : type or None
+            The type of the exception that caused the context to be exited.
+
+        exc_val : Exception or None
+            The exception instance that caused the context to be exited.
+
+        exc_tb : traceback or None
+            The traceback object associated with the exception.
+
+        Returns
+        -------
+        bool
+            False, allowing any exceptions to propagate.
+        """
+
+        # Check if the interactive visualizer exists
+        if self._visualizer is not None:
+
+            # Import matplotlib locally
+            import matplotlib.pyplot as plt
+
+            # Transfer control to GUI
+            plt.show(block=True)
+
+        return False

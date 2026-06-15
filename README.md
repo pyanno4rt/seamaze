@@ -47,7 +47,7 @@ git clone https://github.com/pyanno4rt/seamaze.git
 
 ### Usage
 
-*seamaze* has three main classes which provide a classical, a limited-memory, and a dynamical low-rank CMA-ES variant:
+*seamaze* has three main classes which provide a classical, a limited-memory, and a dynamical low-rank CMA-ES variant. Check the 'examples' folder for detailed benchmark scripts! 
 
 ###### Classical CMA-ES
 
@@ -75,7 +75,7 @@ from seamaze.optimizers.low_rank import DLRCMAES
 | `numpy`                        | <font size="3"> >=2.4.6 </font>       |
 | `scipy`                        | <font size="3"> >=1.17.1 </font>      |
 | `numba`                        | <font size="3"> >=0.65.1 </font>      |
-| `matplotlib`                   | <font size="3"> >=3.10.9 </font>      |
+| `matplotlib`                   | <font size="3"> >=3.11.0 </font>      |
 | `seaborn`                      | <font size="3"> >=0.13.2 </font>      |
 
 # Development :rocket:

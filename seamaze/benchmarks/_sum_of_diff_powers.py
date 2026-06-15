@@ -19,9 +19,9 @@ class SumOfDiffPowers(BenchmarkFunction):
     """
     Sum-of-different-powers function class.
 
-    An asymmetric, scale-variant function where exponentially varying
-    exponents across dimensions create a severely distorted landscape near the
-    global minimum.
+    A continuous, unimodal hyper-surface characterized by variable scaling and
+    structural asymmetry, where polynomial exponents increase progressively
+    across the parameter dimensions.
 
     Parameters
     ----------

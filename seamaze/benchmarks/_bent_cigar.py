@@ -18,9 +18,9 @@ class BentCigar(BenchmarkFunction):
     """
     Bent-Cigar function class.
 
-    A poorly conditioned, unimodal benchmark function characterized by an
-    extremely narrow, elongated cigar-like shape. Only the first dimension is
-    smoothly scaled, while all other dimensions are heavily penalized by 1e6.
+    A poorly conditioned, unimodal function characterized by an extremely
+    narrow, elongated cigar-like shape. Only the first dimension is smoothly
+    scaled, while all other dimensions are heavily penalized by 1e6.
 
     Parameters
     ----------

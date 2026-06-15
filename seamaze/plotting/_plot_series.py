@@ -5,6 +5,7 @@
 # %% External package import
 
 import matplotlib.pyplot as plt
+from numpy import asarray
 
 # %% Plotting function
 
@@ -39,69 +40,70 @@ def plot_series(
         The file path where the figure should be saved.
     """
 
-    # Set the style parameters
-    plt.rcParams.update({
-        "text.usetex": False,
-        "font.family": 'sans-serif',
-        "font.serif": ['Helvetica', 'Arial', 'DejaVu Sans', 'Liberation Sans'],
-        "axes.labelsize": 10,
-        "font.size": 10,
-        "legend.fontsize": 9,
-        "xtick.labelsize": 9,
-        "ytick.labelsize": 9,
-        "axes.labelweight": 'normal',
-        "pdf.fonttype": 42,
-        "ps.fonttype": 42
-        })
+    # Slice the data
+    series = asarray(series)[:head]
 
-    # Create the figure
-    _, ax = plt.subplots(figsize=(8, 6))
+    # Check if the series contains no data
+    if len(series) == 0:
 
-    # Truncate the series
-    series = series[:head] if head is not None else series
+        return
 
-    # Define the marker style and line width
-    marker_style = '.' if len(series) < 50 else None
-    line_width = 0.75
+    # Run the plotting steps with contextual rcParams
+    with plt.rc_context({'pdf.fonttype': 42, 'ps.fonttype': 42}):
 
-    # Get the plot function
-    plot_func = ax.semilogy if semilog else ax.plot
+        # Create the figure
+        fig, ax = plt.subplots(figsize=(8, 6))
 
-    # Plot the series
-    plot_func(
-        series, marker=marker_style, markersize=3,
-        linestyle='-', linewidth=line_width, alpha=0.8, color='b'
-        )
+        # Define the marker style and line width
+        marker_style = (
+            'o' if len(series) < 30 else ('.' if len(series) < 100 else None)
+            )
 
-    # Check if a title has been provided
-    if title:
+        # Get the plot function
+        plot_func = ax.semilogy if semilog else ax.plot
 
-        # Set the title
-        ax.set_title(title, fontweight='bold')
+        # Plot the series
+        plot_func(
+            range(1, len(series) + 1), series, marker=marker_style,
+            markersize=3, linestyle='-', linewidth=0.75, alpha=0.8, color='b'
+            )
 
-    # Set the axis labels
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
+        # Check if a title has been provided
+        if title:
 
-    # Add a grid
-    ax.grid(True, which="both", ls=":", alpha=0.5, color='0.6')
+            # Set the title
+            ax.set_title(title, fontweight='bold', fontsize=12)
 
-    # Apply a tight layout
-    plt.tight_layout(pad=0.5)
+        # Set the axis labels
+        ax.set_xlabel(xlabel, fontsize=10)
+        ax.set_ylabel(
+            f"{ylabel} (log scale)" if semilog else ylabel, fontsize=10
+            )
 
-    # Check if the figure should be saved
-    if save_path:
+        # Set the tick params
+        ax.tick_params(axis='both', labelsize=9)
 
-        # Save the figure
-        plt.savefig(save_path, bbox_inches='tight', dpi=300, transparent=True)
+        # Add a grid
+        ax.grid(True, which="both", ls=":", alpha=0.5, color='0.6')
 
-        # Close the figure
-        plt.close()
+        # Apply a tight layout
+        plt.tight_layout(pad=0.5)
 
-    else:
+        # Check if the figure should be saved
+        if save_path:
 
-        # Show the figure
-        plt.show(block=True)
+            # Save the figure
+            plt.savefig(
+                save_path, bbox_inches='tight', dpi=300, transparent=True
+                )
 
-        # Close the figure
-        plt.close()
+            # Close the figure
+            plt.close(fig)
+
+        else:
+
+            # Show the figure
+            plt.show(block=True)
+
+            # Close the figure
+            plt.close(fig)
