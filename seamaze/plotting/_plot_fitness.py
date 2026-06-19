@@ -5,7 +5,7 @@
 # %% External package import
 
 import matplotlib.pyplot as plt
-from numpy import asarray
+from numpy import asarray, clip, log1p
 
 # %% Plotting function
 
@@ -59,11 +59,11 @@ def plot_fitness(
         labels = ['Best', 'Mean', 'Worst']
         colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
 
-        # Define the marker style and line width
+        # Define the marker size
         series_length = len(fitness[0])
-        marker_style = (
-            'o' if series_length < 30 else
-            ('.' if series_length < 100 else None)
+        marker_size = (
+            0.0 if series_length > 150
+            else float(clip(15.0 / log1p(series_length), 1.0, 5.0))
             )
 
         # Get the plot function
@@ -74,9 +74,9 @@ def plot_fitness(
 
             # Plot the fitness line
             plot_func(
-                range(1, len(series) + 1), series, marker=marker_style,
-                markersize=3, linestyle='-', linewidth=0.75, color=color,
-                label=label, alpha=0.9
+                range(1, len(series) + 1), series, marker='o',
+                markersize=marker_size, linestyle='-', linewidth=1,
+                color=color, label=label, alpha=0.9
                 )
 
         # Check if a title has been provided

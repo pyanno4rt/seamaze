@@ -5,7 +5,7 @@
 # %% External package import
 
 import matplotlib.pyplot as plt
-from numpy import asarray, linspace
+from numpy import asarray, clip, linspace, log1p
 
 # %% Plotting function
 
@@ -73,10 +73,11 @@ def plot_matrix_slices(
             # Get the index set
             indices = range(1, len(mslice) + 1, step)
 
-            # Define the marker style and size
-            marker_style = (
-                'o' if len(series) < 30 else
-                ('.' if len(series) < 100 else None)
+            # Define the marker size
+            series_length = len(series)
+            marker_size = (
+                0.0 if series_length > 150
+                else float(clip(15.0 / log1p(series_length), 1.0, 5.0))
                 )
 
             # Get the plot function
@@ -84,8 +85,8 @@ def plot_matrix_slices(
 
             # Plot the line
             plot_func(
-                indices, series, marker=marker_style, markersize=3,
-                linestyle='-', linewidth=0.75, alpha=0.8, color=colors[index]
+                indices, series, marker='o', markersize=marker_size,
+                linestyle='-', linewidth=1, alpha=0.8, color=colors[index]
                 )
 
         # Check if a title has been provided

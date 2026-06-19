@@ -113,7 +113,7 @@ class MonitorDLRCMAES:
         Parameters
         ----------
         solver : object of class \
-            :class:`~seamaze.optimizers.low_rank._dlrcmaes.DLRCMAES`
+            :class:`~seamaze.optimizers._dlrcmaes.DLRCMAES`
             The object used to represent the DLR-CMA-ES algorithm.
         """
 
@@ -214,8 +214,8 @@ class MonitorDLRCMAES:
         Parameters
         ----------
         solver : object of class \
-            :class:`~seamaze.optimizers.evolutionary._cmaes.CMAES`
-            The object used to represent the CMA-ES algorithm.
+            :class:`~seamaze.optimizers._dlrcmaes.DLRCMAES`
+            The object used to represent the DLR-CMA-ES algorithm.
         """
 
         # Record the basic parameters

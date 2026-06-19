@@ -28,10 +28,13 @@ from seamaze.utils import make_compat
 
 class LMCMAES:
     """
-    Limited-memory covariance matrix adaptation evolution strategy \
-    (LM-CMA-ES) class.
+    Limited-memory covariance matrix adaptation evolution strategy (LM-CMA-ES)
+    class.
 
-    This class implements the LM-CMA-ES algorithm.
+    This class implements the LM-CMA-ES algorithm according to the paper:
+
+        Loshchilov, I. (2014). A Computationally Efficient Limited Memory
+        CMA-ES for Large Scale Optimization. ArXiv, abs/1404.5520.
 
     Parameters
     ----------
@@ -39,18 +42,18 @@ class LMCMAES:
         Dimension of the search space (number of decision variables).
 
     objective : Callable[[ndarray], float]
-        The objective function to be minimized. Must accept a 1D ``ndarray`` \
+        The objective function to be minimized. Must accept a 1D ``ndarray``
         and return a scalar ``float``.
 
     gradient : Callable[[ndarray], ndarray], optional
         Optional gradient function used for hybrid evolution steps.
 
     lower_variable_bounds : ndarray, default=None
-        Lower bounds on the decision variables. Must be a 1D array of length \
+        Lower bounds on the decision variables. Must be a 1D array of length
         `number_of_variables`. Defaults to -inf for all variables.
 
     upper_variable_bounds : ndarray, default=None
-        Upper bounds on the decision variables. Must be a 1D array of length \
+        Upper bounds on the decision variables. Must be a 1D array of length
         `number_of_variables`. Defaults to +inf for all variables.
 
     number_of_individuals : int, default=None
@@ -66,28 +69,28 @@ class LMCMAES:
         Maximum allowed wall-clock time in seconds.
 
     fitness_threshold : int or float, default=-inf
-        Target fitness value. If the objective value reaches this threshold, \
+        Target fitness value. If the objective value reaches this threshold,
         optimization stops (success criterion).
 
     fitness_window_size : int, default=20
-        Number of past iterations to consider for the median fitness \
+        Number of past iterations to consider for the median fitness
         stagnation check.
 
     tolerance : float, default=1e-3
-        Absolute and relative termination tolerance: stops if the change in \
+        Absolute and relative termination tolerance: stops if the change in
         median fitness over `fitness_window_size` is below this value.
 
     sigma_threshold : float, default=1e-3
-        Minimum allowed step size. If the step size falls below this limit, \
+        Minimum allowed step size. If the step size falls below this limit,
         optimization stops (convergence/collapse criterion).
 
     update_interval : int, default=1
-        Frequency of the covariance update (in generations). Larger values \
+        Frequency of the covariance update (in generations). Larger values
         (e.g. 10) can significantly speed up the algorithm for \
         high-dimensional problems.
 
     callback : Callable[[dict], None], default=None
-        Optional function called at the end of each iteration. Must accept \
+        Optional function called at the end of each iteration. Must accept
         the solver instance.
     """
 

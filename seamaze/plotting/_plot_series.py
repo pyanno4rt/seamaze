@@ -5,7 +5,7 @@
 # %% External package import
 
 import matplotlib.pyplot as plt
-from numpy import asarray
+from numpy import asarray, clip, log1p
 
 # %% Plotting function
 
@@ -54,9 +54,11 @@ def plot_series(
         # Create the figure
         fig, ax = plt.subplots(figsize=(8, 6))
 
-        # Define the marker style and line width
-        marker_style = (
-            'o' if len(series) < 30 else ('.' if len(series) < 100 else None)
+        # Define the marker size
+        series_length = len(series)
+        marker_size = (
+            0.0 if series_length > 150
+            else float(clip(15.0 / log1p(series_length), 1.0, 5.0))
             )
 
         # Get the plot function
@@ -64,8 +66,9 @@ def plot_series(
 
         # Plot the series
         plot_func(
-            range(1, len(series) + 1), series, marker=marker_style,
-            markersize=3, linestyle='-', linewidth=0.75, alpha=0.8, color='b'
+            range(1, len(series) + 1), series, marker='o',
+            markersize=marker_size, linestyle='-', linewidth=1, alpha=0.8,
+            color='b'
             )
 
         # Check if a title has been provided

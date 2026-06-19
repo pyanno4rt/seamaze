@@ -36,7 +36,7 @@ class CMAES:
 
     This class implements the CMA-ES algorithm according to the paper:
 
-        Hansen, N. (2016). The CMA Evolution Strategy: A Tutorial. ArXiv, \
+        Hansen, N. (2016). The CMA Evolution Strategy: A Tutorial. ArXiv,
         abs/1604.00772.
 
     Parameters
@@ -65,7 +65,7 @@ class CMAES:
     initial_sigma : float, default=0.3
         Initial step size.
 
-    maximum_iterations : int, default=10000
+    maximum_iterations : int, default=100000
         Maximum number of generations (iterations) to run before stopping.
 
     maximum_wall_time : int or float, default=43200
@@ -92,7 +92,7 @@ class CMAES:
         (e.g. 10) can significantly speed up the algorithm for
         high-dimensional problems.
 
-    logging_level : {'debug', 'info', 'warning', 'error', 'critical'}, \
+    min_log_level : {'debug', 'info', 'warning', 'error', 'critical'}, \
         default='debug'
         Minimum logging level for passing messages to the console.
 
@@ -110,18 +110,18 @@ class CMAES:
             upper_variable_bounds=None,
             number_of_individuals=None,
             initial_sigma=0.3,
-            maximum_iterations=10000,
+            maximum_iterations=100000,
             maximum_wall_time=43200,
             fitness_threshold=-inf,
             fitness_window_size=50,
             tolerance=1e-6,
             sigma_threshold=1e-8,
             update_interval=1,
-            logging_level='debug',
+            min_log_level='debug',
             callback=None):
 
         # Initialize the logger
-        self.logger = Logging('CMA-ES', logging_level)
+        self.logger = Logging('CMA-ES', min_log_level)
 
         # Log a message about the initialization
         self.logger.info('Initializing CMA-ES ...')
@@ -157,7 +157,7 @@ class CMAES:
         # Initialize the elite size
         self._elite_size = int(nsum(base_weights > 0))
 
-        # Determine the sums of positive and negative weights
+        # Determine the sums of positive and negative base weights
         bw_pos_sum = nsum(base_weights[:self._elite_size])
         bw_neg_sum = nsum(base_weights[self._elite_size:])
 

@@ -1,4 +1,4 @@
-"""CMA-ES benchmarking."""
+"""LM-CMA-ES benchmarking."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
@@ -12,14 +12,14 @@ from seamaze.benchmarks import (
     Ackley, BentCigar, Discus, Ellipsoid, Griewank, LinearSlope, Rastrigin,
     Rosenbrock, RotatedEllipsoid, RotatedRastrigin, Schwefel, Sphere,
     StyblinskiTang, SumOfDiffPowers)
-from seamaze.diagnostics import MonitorCMAES
-from seamaze.optimizers import CMAES
+from seamaze.diagnostics import MonitorLMCMAES
+from seamaze.optimizers import LMCMAES
 from seamaze.plotting import ResultPlotter
 
 # %% Workflow
 
 """
-This script provides a workflow to run benchmarking tests for CMA-ES.
+This script provides a workflow to run benchmarking tests for LM-CMA-ES.
 
 Available benchmark functions are:
 
@@ -40,10 +40,10 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Rosenbrock'
+name = 'Sphere'
 
 # Enter the problem dimensionality
-ndim = 30
+ndim = 100
 
 # Get the benchmark function class
 problems = {
@@ -67,27 +67,27 @@ problems = {
 problem = problems[name](ndim)
 
 # Initialize the monitor as a context manager
-with MonitorCMAES(
+with MonitorLMCMAES(
     interval=1, mode='interactive', plot_bounds=((-5, -5), (5, 5)),
     delay=0.001) as monitor:
 
-    # Initialize the CMA-ES solver
-    solver = CMAES(
+    # Initialize the LM-CMA-ES solver
+    solver = LMCMAES(
         number_of_variables=problem.ndim,
         objective=problem.__call__,
         # gradient=problem.gradient,
-        lower_variable_bounds=array(problem.bounds[0]),
-        upper_variable_bounds=array(problem.bounds[1]),
+        # lower_variable_bounds=array(problem.bounds[0]),
+        # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        maximum_iterations=100000,
+        maximum_iterations=10000,
         maximum_wall_time=43200,
         fitness_threshold=None,
         fitness_window_size=50,
         tolerance=1e-6,
         sigma_threshold=1e-8,
-        update_interval=1,  # Update every iteration
-        min_log_level='debug',
+        update_interval=100,  # Update every iteration
+        logging_level='debug',
         callback=monitor.full  # Enable full monitoring
         )
 
@@ -112,4 +112,4 @@ with MonitorCMAES(
     plotter.show_cov_spectr_norm = True
 
     # Plot all selected results
-    # plotter.plot_all()
+    plotter.plot_all()

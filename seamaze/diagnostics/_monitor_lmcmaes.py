@@ -1,4 +1,4 @@
-"""CMA-ES monitor."""
+"""LM-CMA-ES monitor."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
@@ -14,12 +14,12 @@ from seamaze.plotting import Visualizer2D
 # %% Class definition
 
 
-class MonitorCMAES:
+class MonitorLMCMAES:
     """
-    CMA-ES monitor class.
+    LM-CMA-ES monitor class.
 
     This class implements a monitoring system for tracking optimization \
-    parameters of CMA-ES.
+    parameters of LM-CMA-ES.
 
     Parameters
     ----------
@@ -113,8 +113,8 @@ class MonitorCMAES:
         Parameters
         ----------
         solver : object of class \
-            :class:`~seamaze.optimizers._cmaes.CMAES`
-            The object used to represent the CMA-ES algorithm.
+            :class:`~seamaze.optimizers._lmcmaes.LMCMAES`
+            The object used to represent the LM-CMA-ES algorithm.
         """
 
         # Increment the counter
@@ -180,7 +180,6 @@ class MonitorCMAES:
                     population=solver._population,
                     mean=solver._mean,
                     cov=solver._cov,
-                    svs=solver._core_vector,
                     sigma=solver._sigma,
                     fitness=solver._fitness,
                     squared_bound_errors=solver._squared_bound_errors,
@@ -211,8 +210,8 @@ class MonitorCMAES:
         Parameters
         ----------
         solver : object of class \
-            :class:`~seamaze.optimizers._cmaes.CMAES`
-            The object used to represent the CMA-ES algorithm.
+            :class:`~seamaze.optimizers._lmcmaes.LMCMAES`
+            The object used to represent the LM-CMA-ES algorithm.
         """
 
         # Record the basic parameters

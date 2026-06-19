@@ -27,7 +27,7 @@ from scipy.linalg import eigh
 # %% Internal package import
 
 from seamaze.logging import Logging
-from seamaze.optimizers.low_rank import LowRankIntegrator
+from seamaze.optimizers import LowRankIntegrator
 from seamaze.utils import make_compat
 
 # %% Dynamical low-rank covariance matrix adaptation evolution algorithm
