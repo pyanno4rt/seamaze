@@ -13,10 +13,10 @@ from seamaze.optimizers._low_rank_integrator import LowRankIntegrator
 
 from seamaze.optimizers._cmaes import CMAES
 from seamaze.optimizers._dlrcmaes import DLRCMAES
-from seamaze.optimizers._lmcmaes import LMCMAES
+from seamaze.optimizers._lmmaes import LMMAES
 
 __all__ = [
     'LowRankIntegrator',
     'CMAES',
     'DLRCMAES',
-    'LMCMAES']
+    'LMMAES']

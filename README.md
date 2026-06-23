@@ -19,13 +19,13 @@
   </picture>
 </p>
 
-<h3 align='center'>A Python Library for Classical, Limited-Memory, and Dynamical Low-Rank CMA-ES</h3>
+<h3 align='center'>A Python Library for Classical, Limited-Memory, and Dynamical Low-Rank Covariance Matrix Adaptation Evolution Strategy</h3>
 
 ---
 
 # General :earth_americas:
 
-*seamaze* is a Python library for classical, limited-memory and Dynamical Low-Rank (DLR) variants of the Covariance Matrix Adaptation Evolution Strategy (CMA-ES). It provides state-of-the-art, derivative-free algorithms designed for continuous, non-linear, and non-convex real-parameter optimization, excelling in ill-conditioned, non-separable, or rugged fitness landscapes. By leveraging limited-memory and DLR approximations, *seamaze* maintains computational efficiency even on high-dimensional black-box problems. This implementation further incorporates first-order information, constraint handling, and multi-stage restart mechanisms.
+*seamaze* is a Python library for classical, limited-memory and dynamical low-rank (DLR) variants of the covariance matrix adaptation evolution strategy (CMA-ES). It provides state-of-the-art, derivative-free algorithms designed for continuous, non-linear, and non-convex real-parameter optimization, excelling in ill-conditioned, non-separable, or rugged fitness landscapes. By leveraging limited-memory and DLR approximations, *seamaze* maintains computational efficiency even on high-dimensional black-box problems. This implementation further incorporates first-order information, constraint handling, and multi-stage restart mechanisms.
 
 # Installation :computer:
 
@@ -52,19 +52,19 @@ git clone https://github.com/pyanno4rt/seamaze.git
 ###### Classical CMA-ES
 
 ```python
-from seamaze.optimizers.evolutionary import CMAES
+from seamaze.optimizers import CMAES
 ```
 
 ###### Limited-memory CMA-ES
 
 ```python
-from seamaze.optimizers.evolutionary import LMCMAES
+from seamaze.optimizers import LMMAES
 ```
 
 ###### Dynamical low-rank CMA-ES
 
 ```python
-from seamaze.optimizers.low_rank import DLRCMAES
+from seamaze.optimizers import DLRCMAES
 ```
 
 ### Dependencies
@@ -106,9 +106,9 @@ To cite *seamaze*, either use the link in the right sidebar of the Github landin
 
 ```tex
 @software{seamaze,
-  title = {{seamaze}: a python library for classical, limited-memory, and dynamical low-rank CMA-ES},
+  title = {{seamaze}: a python library for classical, limited-memory, and dynamical low-rank covariance matrix adaptation evolution strategy},
   author = {Ortkamp, Tim and Patwardhan, Chinmay and Stammer, Pia},
-  version = {0.0.3},
+  version = {0.0.4},
   license = {MIT},
   year = {2026},
   publisher = {GitHub},

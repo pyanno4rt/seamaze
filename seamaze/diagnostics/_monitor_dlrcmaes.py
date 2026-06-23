@@ -9,7 +9,7 @@ from numpy.linalg import norm
 
 # %% Internal package import
 
-from seamaze.plotting import Visualizer2D
+from seamaze.plotting import Visualizer
 
 # %% Class definition
 
@@ -127,8 +127,7 @@ class MonitorDLRCMAES:
             if self.mode == 'interactive':
 
                 # Initialize the visualizer
-                self._visualizer = Visualizer2D(
-                    objective=solver.objective,
+                self._visualizer = Visualizer(
                     bounds=self.plot_bounds,
                     dimensions=solver._number_of_variables,
                     pop_size=solver._pop_size)
@@ -184,7 +183,7 @@ class MonitorDLRCMAES:
                     sigma=solver._sigma,
                     fitness=solver._fitness,
                     squared_bound_errors=solver._squared_bound_errors,
-                    best_fitness=solver._result['optimal_value'].item(),
+                    optimal_value=solver._result['optimal_value'].item(),
                     delay=self.delay)
 
             # Record the iteration and the current best objective value

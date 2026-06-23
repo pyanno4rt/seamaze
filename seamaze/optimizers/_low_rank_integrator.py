@@ -672,6 +672,7 @@ class LowRankIntegrator:
         d_psi = U_proj_had_pinv @ diag(U_proj @ F @ U_proj) # Add F here
 
         self._psi = diag(psi + dt * d_psi)
+
         #
         self.K_step(K_slice, V, dt)
         K_slice -= dt * (d_psi @ U)

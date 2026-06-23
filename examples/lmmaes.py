@@ -1,4 +1,4 @@
-"""LM-CMA-ES benchmarking."""
+"""LM-MA-ES benchmarking."""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
@@ -12,14 +12,14 @@ from seamaze.benchmarks import (
     Ackley, BentCigar, Discus, Ellipsoid, Griewank, LinearSlope, Rastrigin,
     Rosenbrock, RotatedEllipsoid, RotatedRastrigin, Schwefel, Sphere,
     StyblinskiTang, SumOfDiffPowers)
-from seamaze.diagnostics import MonitorLMCMAES
-from seamaze.optimizers import LMCMAES
+from seamaze.diagnostics import MonitorLMMAES
+from seamaze.optimizers import LMMAES
 from seamaze.plotting import ResultPlotter
 
 # %% Workflow
 
 """
-This script provides a workflow to run benchmarking tests for LM-CMA-ES.
+This script provides a workflow to run benchmarking tests for LM-MA-ES.
 
 Available benchmark functions are:
 
@@ -40,10 +40,10 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Sphere'
+name = 'Rosenbrock'
 
 # Enter the problem dimensionality
-ndim = 100
+ndim = 10
 
 # Get the benchmark function class
 problems = {
@@ -67,12 +67,12 @@ problems = {
 problem = problems[name](ndim)
 
 # Initialize the monitor as a context manager
-with MonitorLMCMAES(
-    interval=1, mode='interactive', plot_bounds=((-5, -5), (5, 5)),
+with MonitorLMMAES(
+    interval=1, mode='silent', plot_bounds=((-5, -5), (5, 5)),
     delay=0.001) as monitor:
 
-    # Initialize the LM-CMA-ES solver
-    solver = LMCMAES(
+    # Initialize the LM-MA-ES solver
+    solver = LMMAES(
         number_of_variables=problem.ndim,
         objective=problem.__call__,
         # gradient=problem.gradient,
@@ -80,14 +80,14 @@ with MonitorLMCMAES(
         # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        maximum_iterations=10000,
+        memory_size=None,
+        maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,
         fitness_window_size=50,
         tolerance=1e-6,
         sigma_threshold=1e-8,
-        update_interval=100,  # Update every iteration
-        logging_level='debug',
+        min_log_level='debug',
         callback=monitor.full  # Enable full monitoring
         )
 
@@ -112,4 +112,4 @@ with MonitorLMCMAES(
     plotter.show_cov_spectr_norm = True
 
     # Plot all selected results
-    plotter.plot_all()
+    # plotter.plot_all()

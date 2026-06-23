@@ -43,7 +43,7 @@ Available benchmark functions are:
 name = 'Rosenbrock'
 
 # Enter the problem dimensionality
-ndim = 30
+ndim = 10
 
 # Get the benchmark function class
 problems = {
@@ -68,7 +68,7 @@ problem = problems[name](ndim)
 
 # Initialize the monitor as a context manager
 with MonitorCMAES(
-    interval=1, mode='interactive', plot_bounds=((-5, -5), (5, 5)),
+    interval=1, mode='silent', plot_bounds=((-5, -5), (5, 5)),
     delay=0.001) as monitor:
 
     # Initialize the CMA-ES solver
@@ -76,8 +76,8 @@ with MonitorCMAES(
         number_of_variables=problem.ndim,
         objective=problem.__call__,
         # gradient=problem.gradient,
-        lower_variable_bounds=array(problem.bounds[0]),
-        upper_variable_bounds=array(problem.bounds[1]),
+        # lower_variable_bounds=array(problem.bounds[0]),
+        # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
         maximum_iterations=100000,
@@ -86,7 +86,7 @@ with MonitorCMAES(
         fitness_window_size=50,
         tolerance=1e-6,
         sigma_threshold=1e-8,
-        update_interval=1,  # Update every iteration
+        update_interval=None,
         min_log_level='debug',
         callback=monitor.full  # Enable full monitoring
         )

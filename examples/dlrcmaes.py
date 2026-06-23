@@ -66,55 +66,55 @@ problems = {
 # Initialize the problem
 problem = problems[name](ndim)
 
-# Initialize the monitor (optional)
-monitor = MonitorDLRCMAES(
-    interval=1, mode='interactive', plot_bounds=((-5, -5), (5, 5)),
-    delay=0.001
-    )
+# Initialize the monitor as a context manager
+with MonitorDLRCMAES(
+    interval=1, mode='silent', plot_bounds=((-5, -5), (5, 5)),
+    delay=0.001) as monitor:
 
-# Initialize the DLR-CMA-ES solver
-solver = DLRCMAES(
-    number_of_variables=problem.ndim,
-    objective=problem.__call__,
-    # gradient=problem.gradient,
-    # lower_variable_bounds=array(problem.bounds[0]),
-    # upper_variable_bounds=array(problem.bounds[1]),
-    number_of_individuals=1000,
-    initial_sigma=3.0,  # ~20-30 % of the search range
-    low_rank_integrator='symmetricaugBUG',
-    low_rank_dimension=None,
-    low_rank_tolerance_rel=1e-2,
-    low_rank_tolerance_abs=1e-8,
-    maximum_iterations=10000,
-    maximum_wall_time=43200,
-    fitness_threshold=None,
-    fitness_window_size=50,
-    tolerance=1e-6,
-    sigma_threshold=1e-8,
-    update_interval=1,  # Update every iteration
-    callback=monitor.full  # Enable full monitoring
-    )
+    # Initialize the DLR-CMA-ES solver
+    solver = DLRCMAES(
+        number_of_variables=problem.ndim,
+        objective=problem.__call__,
+        # gradient=problem.gradient,
+        # lower_variable_bounds=array(problem.bounds[0]),
+        # upper_variable_bounds=array(problem.bounds[1]),
+        number_of_individuals=None,
+        initial_sigma=3.0,  # ~20-30 % of the search range
+        low_rank_integrator='symmetricaugBUG',
+        low_rank_dimension=None,
+        low_rank_tolerance_rel=1e-2,
+        low_rank_tolerance_abs=1e-8,
+        maximum_iterations=100000,
+        maximum_wall_time=43200,
+        fitness_threshold=None,
+        fitness_window_size=50,
+        tolerance=1e-6,
+        sigma_threshold=1e-8,
+        update_interval=None,
+        min_log_level='debug',
+        callback=monitor.full  # Enable full monitoring
+        )
 
-# Optimize the decision variables
-result = solver.optimize(array([3.0]*problem.ndim))
+    # Optimize the decision variables
+    result = solver.optimize(array([3.0]*problem.ndim))
 
-# Initialize the result plotter (optional)
-plotter = ResultPlotter(
-    data=monitor.data, label=problem.name, save_folder=None)
+    # Initialize the result plotter (optional)
+    plotter = ResultPlotter(
+        data=monitor.data, label=problem.name, save_folder=None)
 
-# Select the plots
-plotter.show_objective = True
-plotter.show_fitness = True
-plotter.show_bound_viol = True
-plotter.show_step_size = True
-plotter.show_mean_change_norm = True
-plotter.show_sigma_path_norm = True
-plotter.show_cov_path_norm = True
-plotter.show_cov_svs = True
-plotter.show_cov_norm = True
-plotter.show_cov_cn = True
-plotter.show_cov_spectr_norm = True
-plotter.show_integrator_rank = True
+    # Select the plots
+    plotter.show_objective = True
+    plotter.show_fitness = True
+    plotter.show_bound_viol = True
+    plotter.show_step_size = True
+    plotter.show_mean_change_norm = True
+    plotter.show_sigma_path_norm = True
+    plotter.show_cov_path_norm = True
+    plotter.show_cov_svs = True
+    plotter.show_cov_norm = True
+    plotter.show_cov_cn = True
+    plotter.show_cov_spectr_norm = True
+    plotter.show_integrator_rank = True
 
-# Plot all selected results
-plotter.plot_all()
+    # Plot all selected results
+    # ´plotter.plot_all()

@@ -11,9 +11,9 @@ diagnosing the behavior of the implemented optimization algorithms.
 
 from seamaze.diagnostics._monitor_cmaes import MonitorCMAES
 from seamaze.diagnostics._monitor_dlrcmaes import MonitorDLRCMAES
-from seamaze.diagnostics._monitor_lmcmaes import MonitorLMCMAES
+from seamaze.diagnostics._monitor_lmmaes import MonitorLMMAES
 
 __all__ = [
     'MonitorCMAES',
     'MonitorDLRCMAES',
-    'MonitorLMCMAES']
+    'MonitorLMMAES']

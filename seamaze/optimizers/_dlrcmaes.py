@@ -13,9 +13,9 @@ from collections import deque
 from math import inf
 from numba import njit
 from numpy import (
-    add, arange, argmin, argsort, array, clip, copyto, empty, exp, eye,
-    fill_diagonal, float64, full, log, matmul, maximum, median, multiply, ones,
-    sqrt, take, where, zeros)
+    add, allclose, arange, argmax, argmin, argsort, array, clip, copyto, empty,
+    exp, eye, fill_diagonal, float64, full, isinf, log, matmul, maximum,
+    median, minimum, multiply, ones, outer, sqrt, take, where, zeros)
 from numpy import any as nany
 from numpy import max as nmax
 from numpy import min as nmin

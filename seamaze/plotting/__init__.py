@@ -14,7 +14,7 @@ from seamaze.plotting._plot_matrix_slices import plot_matrix_slices
 from seamaze.plotting._plot_series import plot_series
 
 from seamaze.plotting._result_plotter import ResultPlotter
-from seamaze.plotting._visualizer_2d import Visualizer2D
+from seamaze.plotting._visualizer import Visualizer
 
 __all__ = [
     'plot_bound_violations',
@@ -22,4 +22,4 @@ __all__ = [
     'plot_matrix_slices',
     'plot_series',
     'ResultPlotter',
-    'Visualizer2D']
+    'Visualizer']
