@@ -86,9 +86,10 @@ with MonitorCMAES(
         fitness_window_size=50,
         tolerance=1e-6,
         sigma_threshold=1e-8,
-        update_interval=None,
+        update_interval=1,
         min_log_level='debug',
-        callback=monitor.full  # Enable full monitoring
+        callback=monitor.full,  # Enable full monitoring
+        random_state=42
         )
 
     # Optimize the decision variables

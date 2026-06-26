@@ -8,13 +8,14 @@ from time import time
 
 from collections import deque
 from math import inf
-from numba import njit
+from numba import njit, types
 from numpy import (
-    add, allclose, arange, argmin, argsort, array, clip, exp, float64, full,
-    isinf, isnan, log, maximum, sqrt, where, zeros)
+    add, arange, argmin, argsort, array, clip, exp, float64, full, isinf,
+    isnan, log, maximum, ptp, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import any as nany
 from numpy import max as nmax
+from numpy import mean as nmean
 from numpy import min as nmin
 from numpy import sum as nsum
 from numpy.linalg import norm
@@ -98,6 +99,9 @@ class LMMAES:
     callback : Callable[[LMMAES], None], default=None
         Optional function called at the end of each iteration. Must accept
         the solver instance.
+
+    random_state : int or None, default=42
+        Control seed for the random number generator.
     """
 
     def __init__(
@@ -117,7 +121,8 @@ class LMMAES:
             tolerance=1e-6,
             sigma_threshold=1e-8,
             min_log_level='debug',
-            callback=None):
+            callback=None,
+            random_state=42):
 
         # Initialize the logger
         self.logger = Logging('LM-MA-ES', min_log_level)
@@ -126,7 +131,15 @@ class LMMAES:
         self.logger.info('Initializing LM-MA-ES ...')
 
         # Set the random seed
-        self._rng = default_rng(42)
+        if random_state is None:
+
+            # Initialize the default RNG
+            self._rng = default_rng()
+
+        else:
+
+            # Initialize the RNG with control seed
+            self._rng = default_rng(int(random_state))
 
         # Initialize the optimization problem variables
         self._number_of_variables = number_of_variables
@@ -282,7 +295,7 @@ class LMMAES:
         num_iter = min(self._opt_iter, self._memory_size)
 
         # Transform the steps
-        _transform_steps(
+        self._steps[:num_random] = _transform_steps(
             self._steps[:num_random], self._memory, self._lr_mem, num_iter
             )
 
@@ -296,12 +309,12 @@ class LMMAES:
             natural_gradient = gradient.copy()
 
             # Transform the natural gradient
-            _transform_gradient(
+            natural_gradient = _transform_gradient(
                 natural_gradient, self._memory, self._lr_cov, num_iter
                 )
 
             # Rescale the natural gradient
-            rescale = 1.0 / sqrt(gradient @ natural_gradient)
+            rescale = 1.0 / sqrt(gradient @ natural_gradient + 1e-15)
             gradient_step = natural_gradient * rescale
             gradient_step /= (self._sigma + 1e-15)
 
@@ -387,7 +400,7 @@ class LMMAES:
             else:
 
                 # Set the gamma factor < 1
-                gamma_factor = 0.95
+                gamma_factor = 0.99
 
             # Adapt the penalty factor
             self._gamma = clip(self._gamma * gamma_factor, 1e-5, 1e10)
@@ -425,7 +438,7 @@ class LMMAES:
             self,
             fitness):
         """
-        Update the adaptive variables.
+        Update the state variables.
 
         Parameters
         ----------
@@ -433,8 +446,8 @@ class LMMAES:
             Fitness values of the new population.
         """
 
-        # Update the basis variables
-        self._sigma = _tell(
+        # Update the state variables
+        path_sigma_new, mean_new, sigma_new, memory_new = _tell(
             fitness,
             self._zsamples,
             self._steps,
@@ -452,6 +465,12 @@ class LMMAES:
             self._elite_size,
             self._memory_size
             )
+
+        # Save the state variables
+        self._path_sigma = path_sigma_new
+        self._mean = mean_new
+        self._sigma = sigma_new
+        self._memory = memory_new
 
     def optimize(
             self,
@@ -618,15 +637,16 @@ class LMMAES:
         if len(self._fitness_history) == self._fitness_history.maxlen:
 
             # Convert the history to a list
-            history = list(self._fitness_history)
+            history = array(self._fitness_history)
 
-            # Get the best and worst fitness within the window
-            min_fit = nmin(history)
-            max_fit = nmax(history)
-            abs_range = max_fit - min_fit
+            # Get the mean fitness
+            fit_mean = nmean(history)
 
-            # Check if the absolute median difference is below tolerance
-            if abs_range < self.tolerance:
+            # Get the fitness range
+            fit_range = ptp(history)
+
+            # Check if the absolute fitness range is below tolerance
+            if fit_range < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (
@@ -635,7 +655,7 @@ class LMMAES:
                 return True
 
             # Check if the relative median difference is below tolerance
-            if abs_range / (nabs(min_fit) + 1e-15) < self.tolerance:
+            if fit_range / (nabs(fit_mean) + 1e-15) < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (
@@ -650,9 +670,7 @@ class LMMAES:
             longest_axis = self._memory[0, :]
 
             # Check if a marginal shift along the axis has no effect
-            if allclose(
-                    self._mean, self._mean + 0.1 * self._sigma * longest_axis,
-                    rtol=0.0, atol=1e-15):
+            if all(self._mean == self._mean + 0.1 * self._sigma * longest_axis):
 
                 # Add the solver info
                 self._result['solver_info'] = 'NO_EFFECT_AXIS'
@@ -662,7 +680,23 @@ class LMMAES:
         return False
 
 
-@njit("void(float64[::1], float64[:,::1], float64[::1], int64)", fastmath=True)
+# Set the variable types
+f8_1d = types.float64[:]
+f8_1d_c = types.float64[::1]
+f8_2d = types.float64[:, :]
+f8_2d_c = types.float64[:, ::1]
+f8 = types.float64
+i8 = types.int64
+
+@njit(
+      f8_1d(            # Return: gradient
+        f8_1d_c,        # gradient
+        f8_2d_c,        # memory
+        f8_1d_c,        # lr_cov
+        i8,             # num_iter
+        ),
+    fastmath=True
+    )
 def _transform_gradient(gradient, memory, lr_cov, num_iter):
     """Transform the gradient with the memory matrix."""
 
@@ -686,8 +720,17 @@ def _transform_gradient(gradient, memory, lr_cov, num_iter):
         gradient *= (1.0 - lr_cov[j])
         gradient += (lr_cov[j] * dot_product) * memory[j, :]
 
+    return gradient
 
-@njit("(float64[:,::1], float64[:,::1], float64[::1], float64)", fastmath=True)
+@njit(
+      f8_2d(            # Return: steps
+        f8_2d_c,        # steps
+        f8_2d_c,        # memory
+        f8_1d_c,        # lr_mem
+        i8,             # num_iter
+        ),
+    fastmath=True
+    )
 def _transform_steps(steps, memory, lr_mem, num_iter):
     """Transform the steps with the memory matrix."""
 
@@ -706,15 +749,35 @@ def _transform_steps(steps, memory, lr_mem, num_iter):
                 + lr_mem[j] * dot_products[idx] * memory[j, :]
                 )
 
+    return steps
 
-@njit("float64(float64[:], float64[:,:], float64[:,:], float64[::1], "
-      "float64[:], float64[:], float64, float64[:,:], float64, float64[:], "
-      "float64, float64, float64, float64, int64, int64)", fastmath=True)
+@njit(
+      types.Tuple((f8_1d, f8_1d, f8, f8_2d))(
+        # Return: path_sigma, mean, sigma, memory
+        f8_1d,          # fitness
+        f8_2d,          # zsamples
+        f8_2d,          # steps
+        f8_1d_c,        # weights
+        f8_1d,          # path_sigma
+        f8_1d,          # mean
+        f8,             # sigma
+        f8_2d,          # memory
+        f8,             # lr_sigma
+        f8_1d,          # lr_cov
+        f8,             # lr_mean
+        f8,             # mu_eff
+        f8,             # damp_sigma
+        f8,             # expected_path_length
+        i8,             # elite_size
+        i8,             # num_iter
+        ),
+    fastmath=True
+    )
 def _tell(
     fitness, zsamples, steps, weights, path_sigma, mean, sigma, memory,
     lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma, expected_path_length,
     elite_size, memory_size):
-    """Update the basic LMMAES variables."""
+    """Update the state variables."""
 
     # Sort the population by fitness
     sorted_indices = argsort(fitness)
@@ -740,19 +803,19 @@ def _tell(
     # Get the norm of the step-size evolution path
     ps_norm = norm(path_sigma)
 
+    # Update the mean
+    mean += (lr_mean * sigma) * elite_mean_step
+
     # Update the step size
-    sigma_update = sigma * exp(
+    sigma = sigma * exp(
         (lr_sigma / damp_sigma) * (ps_norm / expected_path_length - 1.0)
         )
 
     # Check if the updated sigma is lower than 1e-15
-    if sigma_update < 1e-15:
+    if sigma < 1e-15:
 
         # Clip to 1e-15
-        sigma_update = 1e-15
-
-    # Update the mean
-    mean += (lr_mean * sigma) * elite_mean_step
+        sigma = 1e-15
 
     # Loop over the rows of the memory matrix
     for i in range(memory_size):
@@ -763,4 +826,4 @@ def _tell(
             sqrt(mu_eff * lr_cov[i] * (2.0 - lr_cov[i])) * latent_step
             )
 
-    return sigma_update
+    return path_sigma, mean, sigma, memory

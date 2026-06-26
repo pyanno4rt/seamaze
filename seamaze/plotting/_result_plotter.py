@@ -6,7 +6,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from numpy import array
+from numpy import array, nan, pad
 
 # %% Internal package import
 
@@ -57,7 +57,7 @@ class ResultPlotter:
         self.show_cov_norm = True
         self.show_cov_cn = True
         self.show_cov_spectr_norm = True
-        self.show_integrator_rank = True
+        self.show_rank = True
 
     def _initialize_save_directory(
             self,
@@ -261,8 +261,11 @@ class ResultPlotter:
 
             return
 
+        # Get the singular values
+        svs = self.data['cov_svs']
+
         # Get the number of generations
-        number_of_generations = len(self.data['cov_svs'])
+        number_of_generations = len(svs)
 
         # Set the checkpoints
         checkpoints = {
@@ -278,7 +281,7 @@ class ResultPlotter:
 
             # Plot the singular values
             plot_series(
-                series=sorted(self.data['cov_svs'][index], reverse=True),
+                series=sorted(svs[index], reverse=True),
                 head=None,
                 semilog=True,
                 title=(
@@ -289,9 +292,16 @@ class ResultPlotter:
                 save_path=self._get_save_path(f'cov_svs_{phase}.pdf')
                 )
 
+        # Pad the covariance paths if necessary
+        max_length = max(len(arr) for arr in svs)
+        padded_list = [
+            pad(arr, (0, max_length - len(arr)), constant_values=nan)
+            for arr in svs
+            ]
+
         # Plot the covariance singular value paths
         plot_matrix_slices(
-            matrix=array(self.data['cov_svs']),
+            matrix=array(padded_list),
             axis=0,
             step=1,
             semilog=True,
@@ -352,21 +362,21 @@ class ResultPlotter:
                 save_path=self._get_save_path('cov_spectr_norm.pdf')
                 )
 
-    def plot_integrator_rank(self):
+    def plot_rank(self):
         """Plot the rank of the DLR integrator."""
 
         # Check if the rank of the integrator should be plotted
-        if self.show_integrator_rank and 'int_rank' in self.data:
+        if self.show_rank and 'rank' in self.data:
 
             # Plot the integrator rank evolution
             plot_series(
-                series=self.data['int_rank'],
+                series=self.data['rank'],
                 head=None,
                 semilog=False,
-                title=f'Integrator rank ({self.label})',
+                title=f'Covariance rank ({self.label})',
                 xlabel='Generation',
                 ylabel='Value',
-                save_path=self._get_save_path('int_rank.pdf')
+                save_path=self._get_save_path('rank.pdf')
                 )
 
     def plot_all(self):
@@ -383,4 +393,4 @@ class ResultPlotter:
         self.plot_covariance_norm()
         self.plot_covariance_condition_number()
         self.plot_covariance_spectral_norm()
-        self.plot_integrator_rank()
+        self.plot_rank()

@@ -11,27 +11,26 @@ from time import time
 
 from collections import deque
 from math import inf
-from numba import njit
+from numba import njit, types
 from numpy import (
-    add, allclose, arange, argmax, argmin, argsort, array, clip, copyto, empty,
-    exp, eye, fill_diagonal, float64, full, isinf, log, matmul, maximum,
-    median, minimum, multiply, ones, outer, sqrt, take, where, zeros)
+    add, arange, argmax, argmin, argsort, array, ascontiguousarray, clip, diag,
+    exp, eye, float64, full, isinf, isnan, log, maximum, minimum, ptp, ones,
+    outer, sqrt, where, zeros)
+from numpy import abs as nabs
 from numpy import any as nany
 from numpy import max as nmax
+from numpy import mean as nmean
 from numpy import min as nmin
 from numpy import sum as nsum
-from numpy.linalg import norm
+from numpy.linalg import eigh, norm, qr
 from numpy.random import default_rng
-from scipy.linalg import eigh
 
 # %% Internal package import
 
 from seamaze.logging import Logging
-from seamaze.optimizers import LowRankIntegrator
 from seamaze.utils import make_compat
 
-# %% Dynamical low-rank covariance matrix adaptation evolution algorithm
-# (DLR-CMA-ES)
+# %% Class definition
 
 
 class DLRCMAES:
@@ -39,7 +38,13 @@ class DLRCMAES:
     Dynamical low-rank covariance matrix adaptation evolution strategy \
     (DLR-CMA-ES) class.
 
-    This class implements the DLR-CMA-ES algorithm.
+    This class implements the novel DLR-CMA-ES algorithm, introduced in our
+    upcoming paper:
+
+        Ortkamp, T., Patwardhan, C. and Stammer, P. (2026). A dynamical
+        low-rank covariance matrix adaptation hybrid evolution strategy for
+        computationally efficient large-scale constrained optimization.
+        (unpublished).
 
     Parameters
     ----------
@@ -47,34 +52,28 @@ class DLRCMAES:
         Dimension of the search space (number of decision variables).
 
     objective : Callable[[ndarray], float]
-        The objective function to be minimized. Must accept a 1D ``ndarray`` \
+        The objective function to be minimized. Must accept a 1D ``ndarray``
         and return a scalar ``float``.
 
     gradient : Callable[[ndarray], ndarray], optional
         Optional gradient function used for hybrid evolution steps.
 
     lower_variable_bounds : ndarray, default=None
-        Lower bounds on the decision variables. Must be a 1D array of length \
+        Lower bounds on the decision variables. Must be a 1D array of length
         `number_of_variables`. Defaults to -inf for all variables.
 
     upper_variable_bounds : ndarray, default=None
-        Upper bounds on the decision variables. Must be a 1D array of length \
+        Upper bounds on the decision variables. Must be a 1D array of length
         `number_of_variables`. Defaults to +inf for all variables.
 
     number_of_individuals : int, default=None
         Population size. Defaults to 4 + int(3*log(`number_of_variables`)).
 
     initial_sigma : float, default=0.3
-        Initial step size (standard deviation).
-
-    low_rank_integrator : {'fixedBUG', 'fixedsymmetricBUG', 'fixedaugBUG', \
-                           'fixedSPDBUG', 'augBUG', 'symmetricaugBUG'}, \
-        default='fixedsymmetricBUG'
-        Name of the low-rank integrator.
+        Initial step size.
 
     low_rank_dimension : int, default=None
-        Initial rank of the approximation. Defaults to \
-        `number_of_variables` // 10.
+        Initial rank of the approximation. Defaults to `number_of_variables`.
 
     low_rank_tolerance_rel : float, default=1e-2
         Relative tolerance of the rank truncation.
@@ -82,36 +81,38 @@ class DLRCMAES:
     low_rank_tolerance_abs : float, default=1e-8
         Absolute tolerance of the rank truncation.
 
-    maximum_iterations : int, default=1000
+    maximum_iterations : int, default=100000
         Maximum number of generations (iterations) to run before stopping.
 
-    maximum_wall_time : int or float, default=7200
+    maximum_wall_time : int or float, default=43200
         Maximum allowed wall-clock time in seconds.
 
     fitness_threshold : int or float, default=-inf
-        Target fitness value. If the objective value reaches this threshold, \
+        Target fitness value. If the objective value reaches this threshold,
         optimization stops (success criterion).
 
-    fitness_window_size : int, default=20
-        Number of past iterations to consider for the median fitness \
+    fitness_window_size : int, default=50
+        Number of past iterations to consider for the fitness range
         stagnation check.
 
-    tolerance : float, default=1e-3
-        Absolute and relative termination tolerance: stops if the change in \
-        median fitness over `fitness_window_size` is below this value.
+    tolerance : float, default=1e-6
+        Absolute and relative termination tolerance: stops if the change in
+        fitness range over `fitness_window_size` is below this value.
 
-    sigma_threshold : float, default=1e-3
+    sigma_threshold : float, default=1e-8
         Minimum allowed step size. If the step size falls below this limit, \
         optimization stops (convergence/collapse criterion).
 
-    update_interval : int, default=1
-        Frequency of the low-rank updates (in generations). Larger values \
-        (e.g. 10) can significantly speed up the algorithm for \
-        high-dimensional problems.
+    min_log_level : {'debug', 'info', 'warning', 'error', 'critical'}, \
+        default='debug'
+        Minimum logging level for passing messages to the console.
 
-    callback : Callable[[dict], None], default=None
-        Optional function called at the end of each iteration. Must accept \
+    callback : Callable[[DLRCMAES], None], default=None
+        Optional function called at the end of each iteration. Must accept
         the solver instance.
+
+    random_state : int, default=42
+        Control seed for the internal random number generator.
     """
 
     def __init__(
@@ -123,147 +124,141 @@ class DLRCMAES:
             upper_variable_bounds=None,
             number_of_individuals=None,
             initial_sigma=0.3,
-            low_rank_integrator='fixedSPDBUG',
             low_rank_dimension=None,
             low_rank_tolerance_rel=1e-2,
             low_rank_tolerance_abs=1e-8,
-            maximum_iterations=1000,
-            maximum_wall_time=7200,
+            maximum_iterations=100000,
+            maximum_wall_time=43200,
             fitness_threshold=-inf,
-            fitness_window_size=20,
-            tolerance=1e-3,
-            sigma_threshold=1e-3,
-            update_interval=1,
-            callback=None):
+            fitness_window_size=50,
+            tolerance=1e-6,
+            sigma_threshold=1e-8,
+            min_log_level='debug',
+            callback=None,
+            random_state=42):
 
         # Initialize the logger
-        self.logger = Logging('DLR-CMA-ES', 'debug')
+        self.logger = Logging('DLR-CMA-ES', min_log_level)
 
         # Log a message about the initialization
-        self.logger.info(
-            f'Initializing DLR-CMA-ES with "{low_rank_integrator}"...')
+        self.logger.info('Initializing DLR-CMA-ES with SPD-BUG integrator ...')
 
         # Set the random seed
-        self._rng = default_rng(42)
+        if random_state is None:
+
+            # Initialize the default RNG
+            self._rng = default_rng()
+
+        else:
+
+            # Initialize the RNG with control seed
+            self._rng = default_rng(int(random_state))
 
         # Initialize the optimization problem variables
         self._number_of_variables = number_of_variables
         self.objective = make_compat(objective)
         self.gradient = gradient
         self.lower_variable_bounds = (
-            full(number_of_variables, -inf)
-            if lower_variable_bounds is None else lower_variable_bounds)
+            full(self._number_of_variables, -inf)
+            if lower_variable_bounds is None
+            else array(lower_variable_bounds, dtype=float64)
+            )
         self.upper_variable_bounds = (
-            full(number_of_variables, inf)
-            if upper_variable_bounds is None else upper_variable_bounds)
+            full(self._number_of_variables, inf)
+            if upper_variable_bounds is None
+            else array(upper_variable_bounds, dtype=float64)
+            )
+
+        # Initialize the boundedness indicator
+        self._is_bound = (
+            ~isinf(self.lower_variable_bounds).all() or
+            ~isinf(self.upper_variable_bounds).all()
+            )
+
+        # Initialize the population size
+        self._pop_size = (
+            4 + int(3 * log(self._number_of_variables))
+            if number_of_individuals is None else number_of_individuals
+            )
+        self._pop_size += (2 if self.gradient is not None else 0)
 
         # Determine the integrator rank
-        rank = min(
-            max(1, low_rank_dimension or number_of_variables),
-            number_of_variables)
+        self.rank = min(
+            max(1, low_rank_dimension or self._number_of_variables),
+            self._number_of_variables
+            )
 
-        # Initialize the dynamical low-rank integrator
-        self.integrator = LowRankIntegrator(
-            name=low_rank_integrator,
-            rank=rank,
-            truncation_tolerance_rel=low_rank_tolerance_rel,
-            truncation_tolerance_abs=low_rank_tolerance_abs,
-            N_conserved_basis=0,
-            K_step=self.K_step,
-            L_step=self.L_step,
-            S_step=self.S_step)
-
-        # Initialize the integrator buffers
-        self.integrator.set_buffers(number_of_variables)
-
-        # Initialize the update interval
-        self._update_interval = update_interval
-
-        # Initialize the population and elite sizes
-        self._pop_size = (
-            4 + int(3*log(number_of_variables))
-            if number_of_individuals is None else number_of_individuals)
-        self._pop_size += (2 if gradient is not None else 0)
-        self._elite_size = self._pop_size // 2
-
-        # Initialize the base weights and variance effective selection mass
-        _base_weights = (
+        # Initialize the base weights
+        self._base_weights = (
             log((self._pop_size + 1) / 2) - log(arange(1, self._pop_size + 1))
             )
-        _bw_pos_sum = nsum(_base_weights[:self._elite_size])
-        _bw_neg_sum = nsum(_base_weights[self._elite_size:])
 
+        # Initialize the elite size
+        self._elite_size = int(nsum(self._base_weights > 0))
+
+        # Determine the sums of positive and negative base weights
+        self._bw_pos_sum = nsum(self._base_weights[:self._elite_size])
+        self._bw_neg_sum = nsum(self._base_weights[self._elite_size:])
+
+        # Initialize the variance effective selection mass
         self._mu_eff = (
-            _bw_pos_sum**2 / nsum(_base_weights[:self._elite_size]**2)
+            self._bw_pos_sum**2 /
+            nsum(self._base_weights[:self._elite_size]**2)
             )
-        _mu_eff_neg = (
-            _bw_neg_sum**2 / nsum(_base_weights[self._elite_size:]**2)
+        self._mu_eff_neg = (
+            self._bw_neg_sum**2 /
+            nsum(self._base_weights[self._elite_size:]**2)
             )
 
-        # Initialize the learning rates, damping, and expected path length
+        # Initialize the dynamic variables
+        self._lr_sigma = 0.0
+        self._lr_cov = 0.0
+        self._lr_rank_one = 0.0
+        self._lr_rank_mu = 0.0
+        self._lr_mean = 1.0
+        self._weights = None
+        self._weights_2d = None
+        self._damp_sigma = 0.0
+        self._expected_path_length = 0.0
+
+        self._weights = zeros(self._pop_size, dtype=float64)
+        self._weights_2d = self._weights.reshape(-1, 1)
+
+        # Update the dynamic variables
         self._update_dynamics()
-
-        # Adjust the weights
-        _alpha_mu_neg = 1.0 + self._lr_rank_one / self._lr_rank_mu
-        _alpha_mu_eff_neg = 1.0 + (2.0 * _mu_eff_neg) / (self._mu_eff + 2.0)
-        _alpha_posdef_neg = (
-            (1.0 - self._lr_rank_one - self._lr_rank_mu)
-            / (self._number_of_variables * self._lr_rank_mu)
-            )
-        _alpha_min = min(_alpha_mu_neg, _alpha_mu_eff_neg, _alpha_posdef_neg)
-
-        self._weights = array([
-            (1.0 / _bw_pos_sum) * wi if wi > 0.0 else
-            (_alpha_min / abs(_bw_neg_sum)) * wi
-            for wi in _base_weights])
-        self._weights_2d = self._weights[:, None]
 
         # Initialize the bound/constraint handling parameters
         self._squared_bound_errors = None
         self._gamma = None
 
-        # Initialize the adaptive variables
+        # Initialize the adaptive state variables, arrays, and matrices
         self._wall_start = None
         self._opt_iter = 0
-
         self._sigma = initial_sigma
 
-        self._path_sigma = zeros(rank, dtype=float64)
-        self._path_cov = zeros((rank, 1), order='F', dtype=float64)
-        self._mean = zeros(number_of_variables, dtype=float64)
-
-        self._left_basis = zeros(
-            (number_of_variables, number_of_variables), order='F',
-            dtype=float64)
-        self._left_basis[:rank, :rank] = eye(rank)
-        self._core_matrix = eye(rank, dtype=float64)
-
-        self._core_eig_cache = (ones(rank), eye(rank))
-        self._root_cov = zeros(
-            (number_of_variables, number_of_variables), order='F',
-            dtype=float64)
-        self._root_cov[:rank, :rank] = eye(rank)
-
-        # Initialize the buffer variables
         self._steps = zeros(
-            (self._pop_size, number_of_variables), order='F', dtype=float64)
-        self._elite_steps = zeros(
-            (self._elite_size, number_of_variables), order='F', dtype=float64)
+            (self._pop_size, self._number_of_variables), order='F',
+            dtype=float64
+            )
         self._population = zeros(
-            (self._pop_size, number_of_variables), order='F', dtype=float64)
-        self._left_basis_old = empty(
-            (number_of_variables, number_of_variables), order='F',
-            dtype=float64)
-        self._path_cov_padded = zeros(
-            (number_of_variables, 1), order='F', dtype=float64)
-        self._elite_projection = zeros(
-            (self._elite_size, number_of_variables), order='F', dtype=float64)
-        self._path_full = empty(
-            (number_of_variables, 1), order='F', dtype=float64)
-        self._weighted_steps = empty(
-            (self._elite_size, number_of_variables), order='F', dtype=float64)
-        self._mu_projection = empty(
-            (self._elite_size, number_of_variables), order='F', dtype=float64)
+            (self._pop_size, self._number_of_variables), order='F',
+            dtype=float64
+            )
+
+        self._path_sigma = zeros(self._number_of_variables, dtype=float64)
+        self._path_cov = zeros(self._number_of_variables, dtype=float64)
+        self._mean = zeros(self._number_of_variables, dtype=float64)
+
+        self._basis = eye(
+            self._number_of_variables, order='F', dtype=float64
+            )
+        self._core_vector = ones(self.rank, dtype=float64)
+        self._core_evals = ones(self.rank, dtype=float64)
+        self._core_evecs = eye(self.rank, dtype=float64)
+
+        self._psi = full(
+            self._number_of_variables, 1e-3, dtype=float64
+            )
 
         # Initialize the stopping criteria and tracking variables
         self.maximum_iterations = maximum_iterations
@@ -276,173 +271,72 @@ class DLRCMAES:
         self._callback = callback
         self._result = {
             'optimal_point': None, 'optimal_value': inf, 'solver_info': None,
-            'wall_time': None}
+            'wall_time': None, 'iterations': None
+            }
 
-    def K_step(
-            self,
-            left_basis_product,
-            right_basis,
-            _time_step):
-        """
-        Perform the K-step of the dynamical low-rank integrator.
+    def _update_dynamics(self):
+        """Update the dynamic variables."""
 
-        Parameters
-        ----------
-        left_basis_product :
-            ...
+        # Get the current rank and dimensionality of the problem
+        rank = self.rank
+        dim = self._number_of_variables
 
-        right_basis :
-            ...
+        # Initialize the step size learning rate (depending on rank)
+        self._lr_sigma = (self._mu_eff + 2.0) / (rank + self._mu_eff + 5.0)
 
-        _time_step :
-            ...
-
-        Returns
-        -------
-        ...
-        """
-
-        return self._update_rank_terms(left_basis_product, right_basis)
-
-    def L_step(
-            self,
-            left_basis,
-            right_basis_product,
-            _time_step):
-        """
-        Perform the L-step of the dynamical low-rank integrator.
-
-        Parameters
-        ----------
-        left_basis :
-            ...
-
-        right_basis_product :
-            ...
-
-        _time_step :
-            ...
-
-        Returns
-        -------
-        ...
-        """
-
-        return self._update_rank_terms(right_basis_product, left_basis)
-
-    def S_step(
-            self,
-            left_basis,
-            core_matrix,
-            *args):
-        """
-        Perform the S-step of the dynamical low-rank integrator.
-
-        Parameters
-        ----------
-        left_basis :
-            ...
-
-        core_matrix :
-            ...
-
-        *args : tuple
-            ...
-
-        Returns
-        -------
-        ...
-        """
-
-        # Get the ranks of the covariance evolution path and the core matrix
-        path_rank = self._path_cov.shape[0]
-        core_rank = core_matrix.shape[0]
-
-        # Check if the ranks are different
-        if path_rank != core_rank:
-
-            # Add a padding to the covariance evolution path
-            path_cov_padded = self._path_cov_padded[:core_rank, :]
-            path_cov_padded.fill(0.0)
-            path_cov_padded[:path_rank, :] = self._path_cov
-
-        else:
-
-            # Use the covariance evolution path directly
-            path_cov_padded = self._path_cov
-
-        # Get the projections of the covariance evolution path and elite steps
-        matmul(
-            self._elite_steps, left_basis,
-            out=self._elite_projection[:, :core_rank])
-        elite_projection = self._elite_projection[:, :core_rank]
-
-        core_matrix *= (
-            1
-            - self._lr_rank_one
-            - sum(self._weights[:self._elite_size])*self._lr_rank_mu
+        # Initialize the covariance learning rates (depending on full space)
+        self._lr_cov = (
+            (4.0 + self._mu_eff / dim) / (dim + 4.0 + 2.0 * self._mu_eff / dim)
+            )
+        self._lr_rank_one = (
+            2.0 / ((dim + 1.3)**2 + self._mu_eff)
+            )
+        self._lr_rank_mu = min(
+            1.0 - self._lr_rank_one,
+            2.0 * ((0.25 + self._mu_eff + 1.0 / self._mu_eff - 2.0) /
+                   ((dim + 2.0)**2 + 2.0 * self._mu_eff / 2.0))
             )
 
-        # Add the rank-1 update
-        core_matrix += self._lr_rank_one * (
-            path_cov_padded @ path_cov_padded.T)
+        # Initialize the default mean learning rate
+        self._lr_mean = 1.0
 
-        # Add the rank-mu update
-        core_matrix += self._lr_rank_mu * (
-            elite_projection.T @ (
-                self._weights_2d[:self._elite_size] * elite_projection))
+        # Adjust the base weights to ensure positive definiteness
+        alpha_mu_neg = 1.0 + self._lr_rank_one / (self._lr_rank_mu + 1e-12)
+        alpha_mu_eff_neg = (
+            1.0 + (2.0 * self._mu_eff_neg) / (self._mu_eff + 2.0)
+            )
+        alpha_posdef_neg = (
+            (1.0 - self._lr_rank_one - self._lr_rank_mu)
+            / (dim * self._lr_rank_mu + 1e-12)
+            )
+        alpha_min = min(alpha_mu_neg, alpha_mu_eff_neg, alpha_posdef_neg)
 
-        return core_matrix
+        # Generate a mask for positive base weights
+        pos_mask = self._base_weights > 0
 
-    def _update_rank_terms(
-            self,
-            target_matrix,
-            projection_matrix):
-        """
-        Compute the rank-1 and rank-mu update terms.
-
-        Parameters
-        ----------
-        target_matrix :
-            ...
-
-        projection_matrix :
-            ...
-
-        Returns
-        -------
-        ...
-        """
-
-        # Get the current rank
-        rank = target_matrix.shape[1]
-
-        # Compute the full-rank covariance evolution path
-        rank_cma = self._path_cov.shape[0]
-        matmul(
-            self._left_basis[:, :rank_cma], self._path_cov, out=self._path_full
+        # Set the weights
+        self._weights[pos_mask] = (
+            (1.0 / self._bw_pos_sum) * self._base_weights[pos_mask]
+            )
+        self._weights[~pos_mask] = (
+            (alpha_min / (nabs(self._bw_neg_sum) + 1e-12))
+            * self._base_weights[~pos_mask]
             )
 
-        #
-        target_matrix *= (1 - self._lr_rank_one - self._lr_rank_mu)
+        # Create a 2D view of the weights
+        self._weights_2d = self._weights.reshape(-1, 1)
 
-        # Add the rank-1 update
-        target_matrix += self._lr_rank_one * (self._path_full @ (
-            self._path_full.T @ projection_matrix))
+        # Initialize the damping coefficient (depending on rank)
+        self._damp_sigma = (
+            1.0 + 2.0 * max(
+                0.0, sqrt((self._mu_eff - 1.0) / (rank + 1.0)) - 1.0)
+            + self._lr_sigma
+            )
 
-        # Compute the weighted elite steps
-        multiply(self._weights_2d[:self._elite_size], self._elite_steps, out=self._weighted_steps)
-
-        # Project the weighted steps
-        matmul(
-            self._weighted_steps, projection_matrix,
-            out=self._mu_projection[:, :rank])
-
-        # Add the rank-mu update
-        target_matrix += self._lr_rank_mu * (
-            self._elite_steps.T @ self._mu_projection[:, :rank])
-
-        return target_matrix
+        # Initialize the expected path length (depending on rank)
+        self._expected_path_length = (
+            sqrt(rank) * (1.0 - 1.0 / (4.0 * rank) + 1.0 / (21.0 * rank**2))
+            )
 
     def ask(self):
         """
@@ -458,14 +352,27 @@ class DLRCMAES:
         """
 
         # Get the current rank
-        rank = self.integrator.rank
+        rank = self.rank
 
         # Sample from the standard multivariate Gaussian
-        num_random = self._pop_size - (2 if self.gradient is not None else 0)
-        zsamples = self._rng.standard_normal((num_random, rank))
+        num_random = (
+            self._pop_size - 2 if self.gradient is not None
+            else self._pop_size
+            )
+        z_low_rank = self._rng.standard_normal((num_random, rank))
+        z_noise = self._rng.standard_normal(
+            (num_random, self._number_of_variables)
+            )
 
-        # Sample steps from the multivariate Gaussian
-        self._steps[:num_random] = zsamples @ self._root_cov[:, :rank].T
+        # Calculate the root of the covariance matrix
+        root_cov = self._basis[:, :rank] * sqrt(self._core_vector)
+
+        # Transform the samples into low-rank and noisy components
+        structured_part = z_low_rank @ root_cov.T
+        noise_part = z_noise * sqrt(self._psi)
+
+        # Get the steps by adding the components
+        self._steps[:num_random] = structured_part + noise_part
 
         # Check if a gradient has been provided
         if self.gradient is not None:
@@ -474,11 +381,11 @@ class DLRCMAES:
             gradient = self.gradient(self._mean)
 
             # Compute the unscaled natural gradient
-            natural_gradient = self._root_cov[:, :rank] @ (
-                self._root_cov[:, :rank].T @ gradient)
+            basis_grad = root_cov.T @ gradient
+            natural_gradient = root_cov @ basis_grad + self._psi * gradient
 
             # Compute the rescaling factor
-            rescale = 1 / (sqrt(gradient @ natural_gradient) + 1e-15)
+            rescale = 1.0 / (sqrt(gradient @ natural_gradient) + 1e-15)
 
             # Compute the natural gradient step
             gradient_step = natural_gradient * rescale
@@ -487,38 +394,40 @@ class DLRCMAES:
             self._steps[-2] = -gradient_step
             self._steps[-1] = gradient_step
 
-        else:
-
-            # Fill the remaining samples randomly
-            self._steps[-2:] = (
-                self._rng.standard_normal((2, rank))
-                @ self._root_cov[:, :rank].T)
-
         # Sample the new population
         add(self._mean, self._sigma * self._steps, out=self._population)
 
-        # Compute the distance to the lower and upper bounds
-        eps_lower = maximum(0.0, self.lower_variable_bounds - self._population)
-        eps_upper = maximum(0.0, self._population - self.upper_variable_bounds)
+        # Check if the decision variables are bounded
+        if self._is_bound:
 
-        # Sum the squared errors for each individual
-        self._squared_bound_errors = nsum((eps_lower + eps_upper) ** 2, axis=1)
+            # Compute the distance to the lower and upper bounds
+            eps_lower = maximum(
+                0.0, self.lower_variable_bounds - self._population
+                )
+            eps_upper = maximum(
+                0.0, self._population - self.upper_variable_bounds
+                )
 
-        # Mirror the violating individuals into the feasible region
-        self._population = where(
-            self._population < self.lower_variable_bounds,
-            self.lower_variable_bounds + eps_lower,
-            self._population
-        )
-        self._population = where(
-            self._population > self.upper_variable_bounds,
-            self.upper_variable_bounds - eps_upper,
-            self._population
-        )
+            # Sum the squared errors for each individual
+            self._squared_bound_errors = nsum(
+                (eps_lower + eps_upper) ** 2, axis=1
+                )
 
-        # Enforce hard constraints to avoid numerical round-off errors
-        clip(self._population, a_min=self.lower_variable_bounds,
-             a_max=self.upper_variable_bounds, out=self._population)
+            # Mirror the violating individuals back into the feasible region
+            self._population = where(
+                self._population < self.lower_variable_bounds,
+                self.lower_variable_bounds + eps_lower,
+                self._population
+                )
+            self._population = where(
+                self._population > self.upper_variable_bounds,
+                self.upper_variable_bounds - eps_upper,
+                self._population
+                )
+
+            # Enforce hard constraints to avoid numerical round-off errors
+            clip(self._population, a_min=self.lower_variable_bounds,
+                 a_max=self.upper_variable_bounds, out=self._population)
 
     def evaluate(self):
         """
@@ -536,42 +445,57 @@ class DLRCMAES:
         # Compute the unpenalized fitness values
         true_fitness = array([
             self.objective(individual, track=False)
-            for individual in self._population])
+            for individual in self._population
+            ])
 
-        # Check if the penalty factor has been initialized
-        if self._gamma is None:
+        # Check if the decision variables are bounded
+        if self._is_bound:
 
-            # Compute the unpenalized fitness range
-            fitness_range = nmax(true_fitness) - nmin(true_fitness)
+            # Check if the penalty factor has been initialized
+            if self._gamma is None:
 
-            # Scale the penalty factor to the fitness range
-            self._gamma = (
-                (fitness_range if fitness_range > 1e-8 else 10.0) /
-                (self._number_of_variables + 1e-15)
+                # Compute the unpenalized fitness range
+                fitness_range = nmax(true_fitness) - nmin(true_fitness)
+
+                # Scale the penalty factor to the fitness range
+                self._gamma = (
+                    (fitness_range if fitness_range > 1e-8 else 10.0) /
+                    (self._number_of_variables + 1e-15)
+                    )
+
+            # Check if any bound violations occurred
+            if nany(self._squared_bound_errors > 0):
+
+                # Set the gamma factor > 1
+                gamma_factor = 1.1
+
+            else:
+
+                # Set the gamma factor < 1
+                gamma_factor = 0.99
+
+            # Adapt the penalty factor
+            self._gamma = clip(self._gamma * gamma_factor, 1e-5, 1e10)
+
+            # Compute the penalized fitness values
+            selection_fitness = (
+                true_fitness + self._gamma * self._squared_bound_errors
                 )
 
-        # Compute the penalied fitness values
-        selection_fitness = (
-            true_fitness + self._gamma * self._squared_bound_errors
-            )
+        else:
 
-        # Check if any bound violations occurred
-        any_errors = nany(self._squared_bound_errors > 0)
-
-        # Adapt the penalty factor
-        self._gamma = clip(
-            self._gamma * (1.1 * any_errors + 0.99 * (1 - any_errors)),
-            1e-5, 1e10)
+            # Apply unpenalized fitness values for selection
+            selection_fitness = true_fitness
 
         # Get the best unpenalized fitness
         best_index = argmin(selection_fitness)
         true_best_fitness = true_fitness[best_index]
 
-        # Append the best fitness to the history
+        # Append the best (unpenalized) fitness to the history
         self._fitness_history.append(true_best_fitness)
 
         # Check if an improved solution has been found
-        if self._result['optimal_value'] - true_best_fitness > 0:
+        if true_best_fitness < self._result['optimal_value']:
 
             # Update the optimal value and point
             self._result['optimal_value'] = true_best_fitness
@@ -582,11 +506,9 @@ class DLRCMAES:
 
         return true_fitness, selection_fitness
 
-    def tell(
-            self,
-            fitness):
+    def tell(self, fitness):
         """
-        Update the adaptive variables.
+        Update the state variables and perform an SPD-BUG step.
 
         Parameters
         ----------
@@ -595,24 +517,21 @@ class DLRCMAES:
         """
 
         # Get the current rank
-        rank_old = self.integrator.rank
+        rank = self.rank
 
-        # Get the eigenvalues and eigenvectors of the singular value matrix
-        ev, eq = self._core_eig_cache
-
-        # Update the basic variables
-        self._sigma, elite_indices = _tell(
+        # Update the state variables
+        (elite_indices, path_sigma_new, sigma_new, mean_new,
+         path_cov_new)  = _tell(
             fitness,
             self._steps,
             self._weights,
-            self._left_basis[:, :rank_old],
-            self._core_matrix[:rank_old, :rank_old],
-            self._path_sigma,
-            self._path_cov,
+            self._basis[:, :rank],
+            self._core_evals,
+            self._core_evecs,
+            self._path_sigma[:rank],
+            self._path_cov[:rank],
             self._mean,
             self._sigma,
-            ev[:rank_old],
-            eq[:rank_old, :rank_old],
             self._lr_sigma,
             self._lr_cov,
             self._lr_mean,
@@ -620,95 +539,66 @@ class DLRCMAES:
             self._damp_sigma,
             self._expected_path_length,
             self._opt_iter,
-            self._elite_size)
-
-        # Get the elite steps
-        take(self._steps, elite_indices, axis=0, out=self._elite_steps)
-
-        # Check if the dynamical low-rank factors should be updated
-        if self._opt_iter % self._update_interval == 0:
-
-            # Copy the current basis to the buffer
-            copyto(
-                self._left_basis_old[:, :rank_old],
-                self._left_basis[:, :rank_old])
-
-            # Update the dynamical low-rank factors
-            U_new, S_new, _ = self.integrator.update(
-                self._left_basis[:, :rank_old], self._core_matrix,
-                self._left_basis[:, :rank_old], self._lr_cov)
-
-            #
-            rank_new = U_new.shape[1]
-
-            #
-            copyto(self._left_basis[:, :rank_new], U_new)
-            self._core_matrix = S_new
-
-            # Rotate the evolution paths
-            projection = (
-                self._left_basis[:, :rank_new].T
-                @ self._left_basis_old[:, :rank_old])
-            self._path_sigma = (projection @ self._path_sigma).flatten()
-            self._path_cov = (projection @ self._path_cov).reshape(-1, 1)
-
-            # Check if the rank has changed
-            if rank_new != rank_old:
-
-                # Update the dynamic parameters
-                self._update_dynamics()
-
-            # Update the eigenvalues and -vectors of the singular value matrix
-            ev, eq = eigh(
-                self._core_matrix, overwrite_a=True, check_finite=False)
-
-            # Sort in descending order
-            ev, eq = ev[::-1], eq[:, ::-1]
-
-            # Clip the eigenvalues
-            maximum(ev, 1e-15, out=ev)
-
-            # Update the eigendecomposition cache
-            self._core_eig_cache = (ev, eq)
-
-            # Update the sampling matrix
-            matmul(
-                self._left_basis[:, :rank_new], eq * sqrt(ev),
-                out=self._root_cov[:, :rank_new])
-
-            #
-            diagonal_block = self._root_cov[:, rank_new:]
-            diagonal_block.fill(0.0)
-            fill_diagonal(diagonal_block, sqrt(self.integrator._psi))
-
-    def _update_dynamics(self):
-        """Update the dynamic parameters for the current rank."""
-
-        # Get the current rank
-        rank = self.integrator.rank
-
-        # Update the learning rates
-        self._lr_sigma = (self._mu_eff + 2) / (rank + self._mu_eff + 5)
-        self._lr_cov = (
-            (4 + self._mu_eff/rank) / (rank + 4 + 2*self._mu_eff/rank)
+            self._elite_size
             )
-        self._lr_rank_one = 2 / ((rank + 1.3)**2 + self._mu_eff)
-        self._lr_rank_mu = (min(
-            1 - self._lr_rank_one,
-            2*((0.25 + self._mu_eff + 1/self._mu_eff - 2) /
-               ((rank+2)**2 + 2*self._mu_eff/2))
-            ))
-        self._lr_mean = 1.0
 
-        # Update the damping coefficient
-        self._damp_sigma = (
-            1
-            + 2*max(0, sqrt((self._mu_eff-1) / (rank+1)) - 1)
-            + self._lr_sigma)
+        # Save the state variables
+        self._path_sigma[:rank] = path_sigma_new
+        self._sigma = sigma_new
+        self._mean = mean_new
+        self._path_cov[:rank] = path_cov_new
 
-        # Initialize the expected path length
-        self._expected_path_length = (
-            sqrt(rank) * (1 - 1/(4*rank) + 1/(21*rank**2)))
+        # Store the old basis before updating
+        basis_old = self._basis[:, :rank].copy()
+
+        # Update the low-rank and noise factors
+        basis_new, core_vector_new, psi_new, rank_new = _spd_bug_step(
+            self._basis[:, :rank],
+            self._core_vector,
+            self._psi,
+            self._steps[elite_indices],
+            self._weights_2d,
+            self._path_cov[:rank],
+            self._lr_rank_one,
+            self._lr_rank_mu,
+            force_expansion=self.check_rank_expansion()
+            )
+
+        # Compute the rotation matrix (from basis_old to basis_new)
+        projection_matrix = basis_new.T @ basis_old
+
+        # Rotate the step size evolution path
+        rotated_path_sigma = projection_matrix @ self._path_sigma[:rank]
+
+        # Rotate the covariance evolution path
+        rotated_path_cov = projection_matrix @ self._path_cov[:rank]
+
+        # Check if the subspace shrinks
+        if rank_new < rank:
+
+            # Get the retention ratio
+            ratio = rank_new / rank
+
+            # Damp the evolution paths
+            rotated_path_cov *= ratio
+            rotated_path_sigma *= ratio
+
+        # Save the factor states
+        self._basis[:, :rank_new] = basis_new
+        self._core_vector = core_vector_new
+        self._psi[:] = psi_new
+        self.rank = rank_new
+
+        # Assign the rotated sigma and covariance evolution path
+        self._path_sigma[:rank_new] = rotated_path_sigma
+        self._path_cov[:rank_new] = rotated_path_cov
+
+        # Populate the eigenvalue cache
+        self._core_evals = core_vector_new
+        self._core_evecs = eye(rank_new, dtype=float64)
+
+        # Update the dynamic variables
+        self._update_dynamics()
 
     def optimize(
             self,
@@ -739,7 +629,10 @@ class DLRCMAES:
         try:
 
             # Continue until termination criteria are fulfilled
-            while self.check_termination() is False:
+            while not self.check_termination():
+
+                # Increment the iteration counter
+                self._opt_iter += 1
 
                 # "Ask" for a new population
                 self.ask()
@@ -759,10 +652,8 @@ class DLRCMAES:
                 # Log a message about the current result
                 self.logger.info(
                     f'Iteration {self._opt_iter}: '
-                    f'f={round(self._result["optimal_value"], 6)}')
-
-                # Increment the iteration counter
-                self._opt_iter += 1
+                    f'f={round(self._result["optimal_value"], 6)}'
+                    )
 
         except KeyboardInterrupt:
 
@@ -770,22 +661,111 @@ class DLRCMAES:
             self.logger.warning("Optimization interrupted by user ...")
             self._result['solver_info'] = 'STOPPED_BY_USER'
 
-        # Store the runtimes
-        self._result['wall_time'] = time()-self._wall_start
+        # Store the runtime and iterations
+        self._result['wall_time'] = time() - self._wall_start
+        self._result['iterations'] = self._opt_iter
 
-        # Log a message about the final result
-        short_sol = (
-            str(self._result["optimal_point"][:5]).replace("\n", "")[:-1]
-            + " ...]")
+        # Get the optimal point
+        opt_point = self._result['optimal_point']
+
+        # Check if the length is greater than 5
+        if len(opt_point) > 5:
+
+            # Format the first elements and append suspension points
+            short_sol = (
+                "[" + ", ".join(f"{x:.4f}" for x in opt_point[:5]) + " ...]"
+                )
+
+        else:
+
+            # Format the full solution string
+            short_sol = "[" + ", ".join(f"{x:.4f}" for x in opt_point) + "]"
+
+        # Log a message about the optimization results
         self.logger.info(
             'Optimization finished | '
             f'Best value: {round(self._result["optimal_value"], 6)} | '
             f'Best solution: {short_sol} | '
             f'Iterations: {self._opt_iter} | '
             f'Wall-clock: {self._result["wall_time"]} seconds | '
-            f'Solver info: "{self._result["solver_info"]}" ...')
+            f'Solver info: "{self._result["solver_info"]}" ...'
+            )
 
         return self._result
+
+    def check_rank_expansion(self):
+        """
+        Check the evolutionary-state rank expansion criteria.
+
+        Returns
+        -------
+        bool
+            Indicator for expanding the rank.
+        """
+
+        # Get the current rank
+        rank = self.rank
+
+        # Initialize the number of positive and required votes
+        votes = 0
+        required = 2
+
+        # Compute the eigenvalues of the covariance matrix
+        core_evals = self._core_evals
+        cov_evals = core_evals + self._psi[:rank]
+
+        # Get the maximum eigenvalue
+        max_eval = nmax(cov_evals)
+
+        # Check if the current rank is smaller than the problem dimension
+        if rank < self._number_of_variables:
+
+            # Get the minimum eigenvalue by considering the full noise term
+            min_eval = minimum(nmin(cov_evals), nmin(self._psi[rank:]))
+
+        else:
+
+            # Get the minimum eigenvalue
+            min_eval = nmin(cov_evals)
+
+        # Check if the condition number is greater than 1e6
+        if max_eval / (min_eval + 1e-15) > 1e6:
+
+            # Increment the votes
+            votes += 1
+
+        # Check if the fitness history has been completely filled
+        if len(self._fitness_history) == self._fitness_history.maxlen:
+
+            # Get the fitness history
+            history = array(self._fitness_history)
+
+            # Get the mean fitness
+            fit_mean = nmean(history)
+
+            # Get the fitness range
+            fit_range = ptp(history)
+
+            # Check if the fitness stagnates prior to convergence
+            if (fit_range > self.tolerance and
+                    (fit_range / (nabs(fit_mean) + 1e-15) < 1e-3)):
+
+                # Increment the votes
+                votes += 1
+
+            # Get the centered time steps
+            indices = arange(len(history)) - (len(history) - 1) / 2.0
+
+            # Compute the slope over the time steps
+            slope = nsum(indices * (history - fit_mean)) / nsum(indices**2)
+
+            # Check if the linear trend is too small
+            if abs(slope) / (nabs(fit_mean) + 1e-15) < 1e-4:
+
+                # Increment the votes
+                votes += 1
+
+        return votes >= required
 
     def check_termination(self):
         """
@@ -824,36 +804,58 @@ class DLRCMAES:
 
             return True
 
-        # Check if the condition number of the covariance matrix explodes
-        if self._core_matrix.max() >= 10**14:
+        # Get the current rank
+        rank = self.rank
+
+        # Compute the eigenvalues of the covariance matrix
+        core_evals = self._core_evals
+        cov_evals = core_evals + self._psi[:rank]
+
+        # Get the maximum eigenvalue
+        max_eval = nmax(cov_evals)
+
+        # Check if the current rank is smaller than the problem dimension
+        if rank < self._number_of_variables:
+
+            # Get the minimum eigenvalue by considering the full noise term
+            min_eval = minimum(nmin(cov_evals), nmin(self._psi[rank:]))
+
+        else:
+
+            # Get the minimum eigenvalue from the spectrum
+            min_eval = nmin(cov_evals)
+
+        # Check if any eigenvalue is zero or the condition number explodes
+        if min_eval <= 0 or (max_eval / (min_eval + 1e-15)) >= 1e14:
 
             # Add the solver info
             self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'
 
-        # Check if the fitness history is non-empty
-        if len(self._fitness_history) > 0:
+            return True
 
-            # Check if the optimal value is below a threshold
-            if (self.fitness_threshold is not None
-                    and self._fitness_history[-1] < self.fitness_threshold):
+        # Check if the optimal value is below a threshold
+        if (self.fitness_threshold is not None
+                and self._result['optimal_value'] < self.fitness_threshold):
 
-                # Add the solver info
-                self._result['solver_info'] = 'FITNESS_BELOW_THRESH'
+            # Add the solver info
+            self._result['solver_info'] = 'FITNESS_BELOW_THRESH'
 
-                return True
+            return True
 
         # Check if the history is completely filled
         if len(self._fitness_history) == self._fitness_history.maxlen:
 
-            # Converthe history to a list
-            history = list(self._fitness_history)
+            # Convert the history to a list
+            history = array(self._fitness_history)
 
-            # Get the first and second half median
-            first_median = median(history[:len(history) // 2])
-            second_median = median(history[len(history) // 2:])
+            # Get the mean fitness
+            fit_mean = nmean(history)
 
-            # Check if the absolute median difference is below tolerance
-            if abs(first_median - second_median) < self.tolerance:
+            # Get the fitness range
+            fit_range = ptp(history)
+
+            # Check if the absolute fitness range is below tolerance
+            if fit_range < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (
@@ -861,13 +863,8 @@ class DLRCMAES:
 
                 return True
 
-            # Get the relative median difference
-            diff = (
-                abs(first_median - second_median) /
-                (abs(second_median) + 1e-15))
-
             # Check if the relative median difference is below tolerance
-            if diff < self.tolerance:
+            if fit_range / (nabs(fit_mean) + 1e-15) < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (
@@ -875,66 +872,316 @@ class DLRCMAES:
 
                 return True
 
+        # Get the longest axis
+        root_cov = self._basis[:, :self.rank] * sqrt(self._core_vector)
+        longest_axis = root_cov[:, argmax(norm(root_cov, axis=0))]
+
+        # Check if the mean is not shifted along the longest axis
+        if all(self._mean == self._mean + 0.1 * self._sigma * longest_axis):
+
+            # Add the solver info
+            self._result['solver_info'] = 'NO_EFFECT_AXIS'
+
+            return True
+
         return False
 
 
-@njit(fastmath=True)
-def _tell(
-    fitness, steps, weights, left_basis, core_matrix, path_sigma, path_cov,
-    mean, sigma, ev, eq, lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma,
-    expected_path_length, opt_iter, elite_size):
-    """Update the basic CMAES variables."""
+# Set the variable types
+f8_1d = types.float64[:]
+f8_2d = types.float64[:, :]
+f8 = types.float64
+i8_1d = types.int64[:]
+i8 = types.int64
+bo = types.bool_
 
-    # Get the indices of the elite fitness values
-    elite_indices = argsort(fitness)[:elite_size]
+@njit(
+    types.Tuple((i8_1d, f8_1d, f8, f8_1d, f8_1d))(
+        # Return: Tuple(elite_indices, path_sigma, sigma, mean, path_cov)
+        f8_1d,          # fitness
+        f8_2d,          # steps
+        f8_1d,          # weights
+        f8_2d,          # basis
+        f8_1d,          # ev
+        f8_2d,          # eq
+        f8_1d,          # path_sigma
+        f8_1d,          # path_cov
+        f8_1d,          # mean
+        f8,             # sigma
+        f8,             # lr_sigma
+        f8,             # lr_cov
+        f8,             # lr_mean
+        f8,             # mu_eff
+        f8,             # damp_sigma
+        f8,             # expected_path_length
+        i8,             # opt_iter
+        i8              # elite_size
+        ),
+    fastmath=True
+    )
+def _tell(
+    fitness, steps, weights, basis, ev, eq, path_sigma, path_cov,
+    mean, sigma, lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma,
+    expected_path_length, opt_iter, elite_size):
+    """Update the state variables."""
+
+    # Get the elite indices
+    sorted_indices = argsort(fitness)
+    elite_indices = sorted_indices[:elite_size]
 
     # Initialize the elite mean step
-    elite_weights = weights[:elite_size].reshape(-1, 1)
-    elite_mean_step = nsum(
-        steps[elite_indices] * elite_weights, axis=0)
+    elite_weights = weights[:elite_size]
+    dim = mean.size
+    elite_mean_step = zeros(dim, dtype=float64)
+    for i in range(elite_size):
+        idx = elite_indices[i]
+        for j in range(dim):
+            elite_mean_step[j] += steps[idx, j] * elite_weights[i]
 
     # Calculate the inverse rooted eigenvalues
-    inv_root_ev = 1.0 / (sqrt(ev) + 1e-15)
+    inv_root_core_vec = 1.0 / (sqrt(ev) + 1e-15)
 
     # Transform the elite mean step
-    latent_mean_step = left_basis.T @ elite_mean_step
-    eq_step = eq.T @ latent_mean_step
-    latent_step_whitened = eq @ (inv_root_ev * eq_step)
+    latent_step = basis.T @ elite_mean_step
+
+    #
+    eq_step = eq.T @ latent_step
+    eq_contiguous = ascontiguousarray(eq)
+    latent_step_whitened = eq_contiguous @ (inv_root_core_vec * eq_step)
 
     # Update the step-size evolution path
     path_sigma *= (1.0 - lr_sigma)
     path_sigma += (
-        sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff)
-        * latent_step_whitened)
+        sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff) * latent_step_whitened
+        )
 
     # Get the norm of the step-size evolution path
     ps_norm = norm(path_sigma)
-
-    # Compute the update switch for the covariance matrix
-    ps_exp = sqrt(1.0 - (1.0 - lr_sigma)**(2.0 * (opt_iter + 1)))
-    condition = (1.4 + 2.0/(core_matrix.shape[0] + 1.0)) * expected_path_length
-    update_switch = 1.0 if (ps_norm / ps_exp) < condition else 0.0
-
-    # Compute the 'keep' term of the evolution path
-    path_cov *= (1.0 - lr_cov)
-
-    # Precompute the coefficient
-    coeff = update_switch * sqrt(lr_cov * (2.0 - lr_cov) * mu_eff)
-
-    # Update the evolution path element
-    path_cov[:, 0] += coeff * elite_mean_step
 
     # Update the mean
     mean += (lr_mean * sigma) * elite_mean_step
 
     # Update the step size
-    sigma *= exp(
-        (lr_sigma / damp_sigma) * (ps_norm / expected_path_length - 1))
+    sigma = sigma * exp(
+        (lr_sigma / damp_sigma) * (ps_norm / expected_path_length - 1.0)
+        )
 
     # Check if the updated sigma is lower than 1e-15
     if sigma < 1e-15:
 
-        # Clip to 1e-15
+        #
         sigma = 1e-15
 
-    return sigma, elite_indices
+    # Compute the update switch for the covariance evolution path
+    update_switch = (
+        1.0
+        if ps_norm / sqrt(1.0 - (1.0 - lr_sigma)**(2.0 * opt_iter))
+        < (1.4 + 2.0 / (mean.size + 1.0)) * expected_path_length
+        else 0.0
+        )
+
+    # Compute the 'keep' term of the covariance evolution path
+    path_cov *= (1.0 - lr_cov)
+
+    # Precompute the coefficient
+    coeff = update_switch * sqrt(lr_cov * (2.0 - lr_cov) * mu_eff)
+
+    # Update the covariance evolution path with the elite mean step
+    path_cov += coeff * latent_step
+
+    return elite_indices, path_sigma, sigma, mean, path_cov
+
+
+@njit(
+    types.Tuple((f8_2d, f8_1d, f8_1d, i8))(
+        # Return: Tuple(basis_new, ev_new, psi_new, rank_new)
+        f8_2d,          # basis
+        f8_1d,          # core_vector
+        f8_1d,          # psi
+        f8_2d,          # elite_steps
+        f8_2d,          # weights_2d
+        f8_1d,          # path_cov
+        f8,             # lr_rank_one
+        f8,             # lr_rank_mu
+        bo              # force_expansion
+        ),
+    fastmath=True
+    )
+def _spd_bug_step(
+    basis, core_vector, psi, elite_steps, weights_2d, path_cov,
+    lr_rank_one, lr_rank_mu, force_expansion):
+    """Perform the SPD-BUG step with adaptive rank truncation."""
+
+    # Get the dimensionality and rank
+    dim, rank = basis.shape
+
+    # Set the maximum rank (twice the rank for augmentation)
+    max_rank = min(2 * rank, dim)
+    aug_size = max_rank - rank
+
+    # Get the elite size
+    elite_size = elite_steps.shape[0]
+
+    # Prepare matrices for BLAS vectorization
+    basis_contiguous = ascontiguousarray(basis)
+    elite_steps_contiguous = ascontiguousarray(elite_steps)
+
+    # Diagonalize the core vector
+    S = diag(core_vector)
+
+    # Expand the basis
+    K = basis_contiguous @ S
+
+    # Project the evolution path
+    path_cov_low = path_cov.copy()
+    path_cov_full = basis_contiguous @ path_cov_low
+
+    #
+    K += lr_rank_one * outer(path_cov_full, path_cov_low)
+
+    #
+    elite_proj = elite_steps_contiguous @ basis_contiguous
+
+    #
+    weighted_elite_proj = weights_2d[:elite_size] * elite_proj
+    weighted_elite_proj_contiguous = ascontiguousarray(weighted_elite_proj)
+
+    #
+    K += lr_rank_mu * (
+        elite_steps_contiguous.T.copy() @ weighted_elite_proj_contiguous
+        )
+
+    #
+    diag_basis_proj = ones(dim, dtype=float64)
+
+    #
+    for i in range(dim):
+
+        #
+        for j in range(rank):
+
+            #
+            diag_basis_proj[i] -= basis_contiguous[i, j] ** 2
+
+    #
+    diag_basis_proj = maximum(diag_basis_proj, 1e-8)
+
+    #
+    diag_K = zeros(dim, dtype=float64)
+
+    #
+    for i in range(dim):
+
+        #
+        for j in range(rank):
+
+            #
+            diag_K[i] += K[i, j] * basis_contiguous[i, j]
+
+    # Update and clip the noise term
+    psi_update = 0.1 * (diag_basis_proj * diag_K)
+    psi_new = psi + psi_update
+    psi_new = maximum(psi_new, 1e-3)
+    psi_new = minimum(psi_new, 1.0)
+
+    #
+    K_aug = zeros((dim, max_rank), dtype=float64)
+    K_aug[:, :rank] = K
+    K_aug[:, rank:max_rank] = basis_contiguous[:, :aug_size]
+
+    #
+    basis_aug, _ = qr(K_aug)
+    basis_aug_trimmed = basis_aug[:, :max_rank]
+
+    # Convert the new basis into a contiguous array
+    basis_aug_trimmed_contiguous = ascontiguousarray(basis_aug_trimmed)
+
+    #
+    basis_aug_T_contiguous = ascontiguousarray(basis_aug_trimmed_contiguous.T)
+    M_proj = basis_aug_T_contiguous @ basis_contiguous
+
+    #
+    ext_S = M_proj @ S @ M_proj.T
+    ext_S *= (1.0 - lr_rank_one - lr_rank_mu)
+
+    # Perform rank-1 update
+    p_c_ext = M_proj @ path_cov_low
+    ext_S += lr_rank_one * outer(p_c_ext, p_c_ext)
+
+    # Perform rank-mu update
+    elite_low = elite_steps_contiguous @ basis_aug_trimmed_contiguous
+    weighted_elite_low = weights_2d[:elite_size] * elite_low
+    weighted_elite_low_contiguous = ascontiguousarray(weighted_elite_low)
+    ext_S += lr_rank_mu * (elite_low.T.copy() @ weighted_elite_low_contiguous)
+
+    # Symmetrize the core matrix
+    ext_S += ext_S.T
+    ext_S *= 0.5
+
+    # Extract the eigenvalues and -vectors from the core
+    ev, eq = eigh(ext_S)
+
+    # Get the sorted indices
+    idx = argsort(ev)[::-1]
+
+    # Sort the eigenvalues and -vectors
+    ev_sorted = ev[idx]
+    eq_sorted = eq[:, idx]
+
+    # Loop over the eigenvalue indices
+    for i in range(len(ev_sorted)):
+
+        # Check if the eigenvalue has collapsed or is negative
+        if isnan(ev_sorted[i]) or isinf(ev_sorted[i]) or ev_sorted[i] < 0.0:
+
+            # Fix the eigenvalue to 1e-15
+            ev_sorted[i] = 1e-15
+
+    # Check if the rank should be expanded
+    if force_expansion:
+
+        # Increase the rank by one
+        rank_new = rank + 1
+
+    else:
+
+        # Calculate the total energy
+        total_energy = nsum(maximum(ev_sorted, 0.0))
+
+        # Start the new rank at one
+        rank_new = 1
+
+        # Check if the total energy is reasonably high
+        if total_energy > 1e-12:
+
+            # Initialize the current energy
+            current_energy = 0.0
+
+            # Loop over the eigenvalue indices
+            for i in range(len(ev_sorted)):
+
+                # Add the energy of the current dimension
+                current_energy += max(0.0, ev_sorted[i])
+
+                # Check if the relative threshold has been passed
+                if current_energy / total_energy <= 1:
+
+                    # Set the rank to the number of dimensions evaluated
+                    rank_new = i + 1
+
+                    # Escape the loop
+                    break
+
+    # Clip the rank to [1, d]
+    rank_new = max(rank_new, 1)
+    rank_new = min(rank_new, dim)
+
+    # Truncate the eigenvalues and -vectors of the core
+    ev_truncated = ev_sorted[:rank_new]
+    eq_truncated = eq_sorted[:, :rank_new]
+    eq_truncated_contiguous = ascontiguousarray(eq_truncated)
+
+    # Update the basis
+    basis_new = basis_aug_trimmed_contiguous @ eq_truncated_contiguous
+
+    return basis_new, ev_truncated, psi_new, rank_new

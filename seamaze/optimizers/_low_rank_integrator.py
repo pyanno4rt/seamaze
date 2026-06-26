@@ -5,7 +5,7 @@
 # %% External package import
 
 from numpy import (
-    clip, copyto, diag, eye, float64, matmul, maximum, zeros)
+    clip, copyto, diag, eye, float64, matmul, maximum, ones, zeros)
 from numpy import sum as nsum
 from numpy.linalg import pinv, svd, trace
 from scipy.linalg import qr
@@ -23,7 +23,8 @@ class LowRankIntegrator:
     Parameters
     ----------
     name : {'fixedBUG', 'fixedsymmetricBUG', 'fixedaugBUG', 'fixedSPDBUG', \
-            'augBUG', 'symmetricaugBUG'}
+            'isofixedSPDBUG', 'augBUG', 'symmetricaugBUG', 'SPDaugBUG', \
+            'isoSPDaugBUG'}
         Name of the low-rank integrator.
 
     rank : int
@@ -75,8 +76,11 @@ class LowRankIntegrator:
             'fixedsymmetricBUG': self.fixedsymmetricBUG_step,
             'fixedaugBUG': self.fixedaugBUG_step,
             'fixedSPDBUG': self.fixedSPDBUG_step,
+            'isofixedSPDBUG': self.isofixedSPDBUG_step,
             'augBUG': self.augBUG_step,
-            'symmetricaugBUG': self.symmetricaugBUG_step
+            'symmetricaugBUG': self.symmetricaugBUG_step,
+            'SPDaugBUG': self.SPDaugBUG_step,
+            'isoSPDaugBUG': self.isoSPDaugBUG_step
             }
         self.update_func = updates.get(name, self.fixedsymmetricBUG_step)
 
@@ -147,7 +151,7 @@ class LowRankIntegrator:
         self._M[:self.rank, :self.rank] = eye(self.rank, dtype=float64)
 
         # Initialize psi
-        self._psi = zeros(
+        self._psi = ones(
             (number_of_variables, number_of_variables), dtype=float64)
 
         # Initialize s
@@ -171,8 +175,14 @@ class LowRankIntegrator:
         ...
         """
 
-        # Get the updated factors
-        U_new, S_new, V_new = self.update_func(U, S, V, dt)
+        if self.name == 'SPDaugBUG':
+
+            U_new, S_new, V_new = self.update_func(U, S, V, self._psi, dt)
+
+        else:
+
+            # Get the updated factors
+            U_new, S_new, V_new = self.update_func(U, S, V, dt)
 
         return U_new, S_new, V_new
 
@@ -650,7 +660,8 @@ class LowRankIntegrator:
 
         #
         rank = U.shape[1]
-        max_rank = 2*rank
+        max_rank = min(2*rank, self._capacity)
+        aug_size = max_rank - rank
 
         #
         K_slice = self._K[:, :rank]
@@ -676,11 +687,16 @@ class LowRankIntegrator:
         #
         self.K_step(K_slice, V, dt)
         K_slice -= dt * (d_psi @ U)
-        copyto(self._K[:, rank:max_rank], U)
 
         #
-        Uhat, _ = qr(K_aug, mode='economic', check_finite=False) # K_aug is initialized at the beginning but never updated
-        copyto(self._Uhat[:, :Uhat.shape[1]], Uhat)
+        if aug_size > 0:
+
+            #
+            copyto(self._K[:, rank:max_rank], U[:, :aug_size])
+
+        #
+        Uhat, _ = qr(K_aug, mode='economic', check_finite=False)
+        copyto(Uhat_aug, Uhat)
 
         #
         M_proj = self._M[:max_rank, :rank]
@@ -865,7 +881,6 @@ class LowRankIntegrator:
 
         # Update the global rank
         self.rank = int(rmax)
-        print('Rank: ', self.rank)
 
         #
         self.rank_history.append(self.rank)

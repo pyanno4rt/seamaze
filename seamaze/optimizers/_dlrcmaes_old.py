@@ -1,4 +1,7 @@
-"""Covariance matrix adaptation evolution strategy (CMA-ES)."""
+"""
+Dynamical low-rank covariance matrix adaptation evolution strategy
+(DLR-CMA-ES).
+"""
 
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
@@ -8,15 +11,14 @@ from time import time
 
 from collections import deque
 from math import inf
-from numba import njit, types
+from numba import njit
 from numpy import (
-    add, arange, argmax, argmin, argsort, array, asfortranarray, clip, exp,
-    eye, float64, full, isinf, log, maximum, minimum, ones, outer, ptp, sqrt,
-    where, zeros)
+    add, allclose, arange, argmax, argmin, argsort, array, clip, copyto, diag,
+    empty, exp, eye, fill_diagonal, float64, full, isinf, log, matmul, maximum,
+    minimum, multiply, ones, outer, sqrt, take, where, zeros)
 from numpy import abs as nabs
 from numpy import any as nany
 from numpy import max as nmax
-from numpy import mean as nmean
 from numpy import min as nmin
 from numpy import sum as nsum
 from numpy.linalg import norm
@@ -26,19 +28,24 @@ from scipy.linalg import eigh
 # %% Internal package import
 
 from seamaze.logging import Logging
+from seamaze.optimizers import LowRankIntegrator
 from seamaze.utils import make_compat
 
 # %% Class definition
 
 
-class CMAES:
+class DLRCMAES:
     """
-    Covariance matrix adaptation evolution strategy (CMA-ES) class.
+    Dynamical low-rank covariance matrix adaptation evolution strategy \
+    (DLR-CMA-ES) class.
 
-    This class implements the CMA-ES algorithm according to the paper:
+    This class implements the novel DLR-CMA-ES algorithm, introduced in our
+    upcoming paper:
 
-        Hansen, N. (2016). The CMA Evolution Strategy: A Tutorial. ArXiv,
-        abs/1604.00772.
+        Ortkamp, T., Patwardhan, C. and Stammer, P. (2026). A dynamical
+        low-rank covariance matrix adaptation hybrid evolution strategy for
+        computationally efficient large-scale constrained optimization.
+        (unpublished).
 
     Parameters
     ----------
@@ -66,6 +73,22 @@ class CMAES:
     initial_sigma : float, default=0.3
         Initial step size.
 
+    low_rank_integrator : \
+        {'fixedBUG', 'fixedsymmetricBUG', 'fixedaugBUG', 'fixedSPDBUG', \
+         'isofixedSPDBUG', 'augBUG', 'symmetricaugBUG', 'SPDaugBUG', \
+         'isoSPDaugBUG'}, default='fixedsymmetricBUG'
+        Name of the low-rank integrator.
+
+    low_rank_dimension : int, default=None
+        Initial rank of the approximation. Defaults to
+        `number_of_variables` // 10.
+
+    low_rank_tolerance_rel : float, default=1e-2
+        Relative tolerance of the rank truncation.
+
+    low_rank_tolerance_abs : float, default=1e-8
+        Absolute tolerance of the rank truncation.
+
     maximum_iterations : int, default=100000
         Maximum number of generations (iterations) to run before stopping.
 
@@ -85,12 +108,12 @@ class CMAES:
         fitness range over `fitness_window_size` is below this value.
 
     sigma_threshold : float, default=1e-8
-        Minimum allowed step size. If the step size falls below this limit,
+        Minimum allowed step size. If the step size falls below this limit, \
         optimization stops (convergence/collapse criterion).
 
     update_interval : int, default=None
-        Frequency of the covariance update (in generations). Larger values
-        (e.g. 10) can significantly speed up the algorithm for
+        Frequency of the low-rank factorization update (in generations).
+        Larger values (e.g. 10) can significantly speed up the algorithm for
         high-dimensional problems. Defaults to \
         max(1, 0.1/(`number_of_variables`*β)), where β is the sum of the
         rank-1 and rank-mu learning rates.
@@ -99,12 +122,9 @@ class CMAES:
         default='debug'
         Minimum logging level for passing messages to the console.
 
-    callback : Callable[[CMAES], None], default=None
+    callback : Callable[[DLRCMAES], None], default=None
         Optional function called at the end of each iteration. Must accept
         the solver instance.
-
-    random_state : int or None, default=42
-        Control seed for the random number generator.
     """
 
     def __init__(
@@ -116,6 +136,10 @@ class CMAES:
             upper_variable_bounds=None,
             number_of_individuals=None,
             initial_sigma=0.3,
+            low_rank_integrator='SPDaugBUG',
+            low_rank_dimension=None,
+            low_rank_tolerance_rel=1e-2,
+            low_rank_tolerance_abs=1e-8,
             maximum_iterations=100000,
             maximum_wall_time=43200,
             fitness_threshold=-inf,
@@ -124,25 +148,17 @@ class CMAES:
             sigma_threshold=1e-8,
             update_interval=None,
             min_log_level='debug',
-            callback=None,
-            random_state=42):
+            callback=None):
 
         # Initialize the logger
-        self.logger = Logging('CMA-ES', min_log_level)
+        self.logger = Logging('DLR-CMA-ES', min_log_level)
 
         # Log a message about the initialization
-        self.logger.info('Initializing CMA-ES ...')
+        self.logger.info(
+            f'Initializing DLR-CMA-ES with "{low_rank_integrator}"...')
 
         # Set the random seed
-        if random_state is None:
-
-            # Initialize the default RNG
-            self._rng = default_rng()
-
-        else:
-
-            # Initialize the RNG with control seed
-            self._rng = default_rng(int(random_state))
+        self._rng = default_rng(42)
 
         # Initialize the optimization problem variables
         self._number_of_variables = number_of_variables
@@ -170,6 +186,27 @@ class CMAES:
             )
         self._pop_size += (2 if self.gradient is not None else 0)
 
+        # Determine the integrator rank
+        rank = min(
+            max(1, low_rank_dimension or self._number_of_variables),
+            self._number_of_variables
+            )
+
+        # Initialize the dynamical low-rank integrator
+        self.integrator = LowRankIntegrator(
+            name=low_rank_integrator,
+            rank=rank,
+            truncation_tolerance_rel=low_rank_tolerance_rel,
+            truncation_tolerance_abs=low_rank_tolerance_abs,
+            N_conserved_basis=0,
+            K_step=self.K_step,
+            L_step=self.L_step,
+            S_step=self.S_step
+            )
+
+        # Initialize the integrator buffers
+        self.integrator.set_buffers(self._number_of_variables)
+
         # Initialize the base weights
         base_weights = (
             log((self._pop_size + 1) / 2) - log(arange(1, self._pop_size + 1))
@@ -190,60 +227,24 @@ class CMAES:
             bw_neg_sum**2 / nsum(base_weights[self._elite_size:]**2)
             )
 
-        # Initialize the learning rates
-        self._lr_sigma = (
-            (self._mu_eff + 2) / (self._number_of_variables + self._mu_eff + 5)
-            )
-        self._lr_cov = (
-            (4 + self._mu_eff / self._number_of_variables) /
-            (self._number_of_variables + 4
-             + 2 * self._mu_eff/self._number_of_variables)
-            )
-        self._lr_rank_one = (
-            2 / ((self._number_of_variables + 1.3)**2 + self._mu_eff)
-            )
-        self._lr_rank_mu = min(
-            1.0 - self._lr_rank_one,
-            2.0 * (
-                (0.25 + self._mu_eff + 1.0 / self._mu_eff - 2.0) /
-                ((self._number_of_variables + 2.0)**2
-                 + 2.0 * self._mu_eff / 2.0)
-                )
-            )
-        self._lr_mean = 1.0
+        # Initialize the learning rates, damping, and expected path length
+        self._update_dynamics()
 
-        # Adjust the weights to ensure positive definiteness
-        alpha_mu_neg = 1.0 + self._lr_rank_one / (self._lr_rank_mu + 1e-12)
-        alpha_mu_eff_neg = 1.0 + (2.0 * mu_eff_neg) / (self._mu_eff + 2.0)
-        alpha_posdef_neg = (
+        # Adjust the weights
+        _alpha_mu_neg = 1.0 + self._lr_rank_one / self._lr_rank_mu
+        _alpha_mu_eff_neg = 1.0 + (2.0 * mu_eff_neg) / (self._mu_eff + 2.0)
+        _alpha_posdef_neg = (
             (1.0 - self._lr_rank_one - self._lr_rank_mu)
-            / (self._number_of_variables * self._lr_rank_mu + 1e-12)
+            / (rank * self._lr_rank_mu)
             )
-        alpha_min = min(alpha_mu_neg, alpha_mu_eff_neg, alpha_posdef_neg)
+        _alpha_min = min(_alpha_mu_neg, _alpha_mu_eff_neg, _alpha_posdef_neg)
 
-        self._weights = where(
-            base_weights > 0,
-            (1.0 / bw_pos_sum) * base_weights,
-            (alpha_min / (abs(bw_neg_sum) + 1e-12)) * base_weights
+        self._weights = array([
+            (1.0 / bw_pos_sum) * wi if wi > 0.0 else
+            (_alpha_min / abs(bw_neg_sum)) * wi
+            for wi in base_weights]
             )
-
-        # Initialize the damping coefficient
-        self._damp_sigma = (
-            1.0 + 2.0 * max(
-                0.0,
-                sqrt((self._mu_eff - 1.0)/(self._number_of_variables + 1.0))
-                - 1.0
-                )
-            + self._lr_sigma
-            )
-
-        # Initialize the expected path length
-        self._expected_path_length = (
-            sqrt(self._number_of_variables) * (
-                1.0
-                - 1.0 / (4.0 * self._number_of_variables)
-                + 1.0 / (21.0 * self._number_of_variables**2))
-            )
+        self._weights_2d = self._weights[:, None]
 
         # Initialize the bound/constraint handling parameters
         self._squared_bound_errors = None
@@ -258,23 +259,54 @@ class CMAES:
             (self._pop_size, self._number_of_variables), order='F',
             dtype=float64
             )
+        self._elite_steps = zeros(
+            (self._elite_size, self._number_of_variables), order='F',
+            dtype=float64
+            )
         self._population = zeros(
             (self._pop_size, self._number_of_variables), order='F',
             dtype=float64
             )
 
-        self._path_sigma = zeros(self._number_of_variables, dtype=float64)
-        self._path_cov = zeros(self._number_of_variables, dtype=float64)
+        self._path_sigma = zeros(rank, dtype=float64)
+        self._path_cov = zeros((rank, 1), order='F', dtype=float64)
         self._mean = zeros(self._number_of_variables, dtype=float64)
 
-        self._cov = eye(self._number_of_variables, dtype=float64)
-        self._root_cov = eye(
-            self._number_of_variables, order='F', dtype=float64
+        self._left_basis = zeros(
+            (self._number_of_variables, self._number_of_variables), order='F',
+            dtype=float64
             )
-        self._basis = eye(
-            self._number_of_variables, order='F', dtype=float64
+        self._left_basis[:rank, :rank] = eye(rank)
+        self._core_matrix = eye(rank, dtype=float64)
+
+        self._core_eig_cache = (ones(rank), eye(rank))
+        self._root_cov = zeros(
+            (self._number_of_variables, self._number_of_variables), order='F',
+            dtype=float64
             )
-        self._core_vector = ones(self._number_of_variables, dtype=float64)
+        self._root_cov[:rank, :rank] = eye(rank)
+
+        self._left_basis_old = empty(
+            (self._number_of_variables, self._number_of_variables), order='F',
+            dtype=float64
+            )
+        self._path_cov_padded = zeros(
+            (self._number_of_variables, 1), order='F', dtype=float64
+            )
+        self._elite_projection = zeros(
+            (self._elite_size, self._number_of_variables), order='F',
+            dtype=float64
+            )
+        self._path_full = empty(
+            (self._number_of_variables, 1), order='F', dtype=float64)
+        self._weighted_steps = empty(
+            (self._elite_size, self._number_of_variables), order='F',
+            dtype=float64
+            )
+        self._mu_projection = empty(
+            (self._elite_size, self._number_of_variables), order='F',
+            dtype=float64
+            )
 
         # Initialize the stopping criteria and tracking variables
         self.maximum_iterations = maximum_iterations
@@ -295,20 +327,234 @@ class CMAES:
             'wall_time': None, 'iterations': None
             }
 
-    def ask(self):
-        """Generate a new population."""
+    def K_step(
+            self,
+            left_basis_product,
+            right_basis,
+            _time_step):
+        """
+        Perform the K-step of the dynamical low-rank integrator.
 
-        # Partially sample from a standard multivariate Gaussian
+        Parameters
+        ----------
+        left_basis_product :
+            ...
+
+        right_basis :
+            ...
+
+        _time_step :
+            ...
+
+        Returns
+        -------
+        ...
+        """
+
+        return self._update_rank_terms(left_basis_product, right_basis)
+
+    def L_step(
+            self,
+            left_basis,
+            right_basis_product,
+            _time_step):
+        """
+        Perform the L-step of the dynamical low-rank integrator.
+
+        Parameters
+        ----------
+        left_basis :
+            ...
+
+        right_basis_product :
+            ...
+
+        _time_step :
+            ...
+
+        Returns
+        -------
+        ...
+        """
+
+        return self._update_rank_terms(right_basis_product, left_basis)
+
+    def S_step(
+            self,
+            left_basis,
+            core_matrix,
+            *args):
+        """
+        Perform the S-step of the dynamical low-rank integrator.
+
+        Parameters
+        ----------
+        left_basis :
+            ...
+
+        core_matrix :
+            ...
+
+        *args : tuple
+            ...
+
+        Returns
+        -------
+        ...
+        """
+
+        # Get the ranks of the covariance evolution path and the core matrix
+        path_rank = self._path_cov.shape[0]
+        core_rank = core_matrix.shape[0]
+
+        # Check if the ranks are different
+        if path_rank != core_rank:
+
+            # Add a padding to the covariance evolution path
+            path_cov_padded = self._path_cov_padded[:core_rank, :]
+            path_cov_padded.fill(0.0)
+            path_cov_padded[:path_rank, :] = self._path_cov
+
+        else:
+
+            # Use the covariance evolution path directly
+            path_cov_padded = self._path_cov
+
+        # Get the projections of the covariance evolution path and elite steps
+        matmul(
+            self._elite_steps, left_basis,
+            out=self._elite_projection[:, :core_rank])
+        elite_projection = self._elite_projection[:, :core_rank]
+
+        ps_norm = norm(self._path_sigma)
+        update_switch = (
+            1.0
+            if ps_norm / sqrt(
+                    1.0 - (1.0 - self._lr_sigma)**(2.0 * self._opt_iter)
+                    )
+            < (1.4 + 2.0/(self._mean.shape[0] + 1.0))
+            * self._expected_path_length
+            else 0.0
+            )
+
+        core_matrix *= (
+            1.0
+            - self._lr_rank_one
+            - self._lr_rank_mu
+            + (1.0 - update_switch)
+            * self._lr_rank_one * self._lr_cov * (2.0 - self._lr_cov)
+            )
+
+        # Add the rank-1 update
+        core_matrix += self._lr_rank_one * outer(
+            path_cov_padded, path_cov_padded)
+
+        # Add the rank-mu update
+        core_matrix += self._lr_rank_mu * (
+            elite_projection.T @ (
+                self._weights_2d[:self._elite_size] * elite_projection))
+
+        return core_matrix
+
+    def _update_rank_terms(
+            self,
+            target_matrix,
+            projection_matrix):
+        """
+        Compute the rank-1 and rank-mu update terms.
+
+        Parameters
+        ----------
+        target_matrix :
+            ...
+
+        projection_matrix :
+            ...
+
+        Returns
+        -------
+        ...
+        """
+
+        # Get the current rank
+        rank = target_matrix.shape[1]
+
+        # Compute the full-rank covariance evolution path
+        rank_cma = self._path_cov.shape[0]
+        matmul(
+            self._left_basis[:, :rank_cma], self._path_cov, out=self._path_full
+            )
+
+        ps_norm = norm(self._path_sigma)
+        update_switch = (
+            1.0
+            if ps_norm / sqrt(
+                    1.0 - (1.0 - self._lr_sigma)**(2.0 * self._opt_iter)
+                    )
+            < (1.4 + 2.0/(self._mean.shape[0] + 1.0))
+            * self._expected_path_length
+            else 0.0
+            )
+
+        #
+        target_matrix *= (
+            1.0
+            - self._lr_rank_one
+            - self._lr_rank_mu
+            + (1.0 - update_switch)
+            * self._lr_rank_one * self._lr_cov * (2.0 - self._lr_cov)
+            )
+
+        # Add the rank-1 update
+        target_matrix += self._lr_rank_one * (self._path_full @ (
+            self._path_full.T @ projection_matrix))
+
+        # Compute the weighted elite steps
+        multiply(
+            self._weights_2d[:self._elite_size], self._elite_steps,
+            out=self._weighted_steps)
+
+        # Project the weighted steps
+        matmul(
+            self._weighted_steps, projection_matrix,
+            out=self._mu_projection[:, :rank])
+
+        # Add the rank-mu update
+        target_matrix += self._lr_rank_mu * (
+            self._elite_steps.T @ self._mu_projection[:, :rank])
+
+        return target_matrix
+
+    def ask(self):
+        """
+        Generate a new population.
+
+        Returns
+        -------
+        ndarray
+            Sample population (bound to the feasible region).
+
+        ndarray
+            Sample steps.
+        """
+
+        # Get the current rank
+        rank = self.integrator.rank
+
+        # Sample from the standard multivariate Gaussian
         num_random = (
             self._pop_size - 2 if self.gradient is not None
             else self._pop_size
             )
-        zsamples = self._rng.standard_normal(
+        z_low_rank = self._rng.standard_normal((num_random, rank))
+        z_noise = self._rng.standard_normal(
             (num_random, self._number_of_variables)
             )
 
-        # Sample the stochastic steps from the multivariate Gaussian
-        self._steps[:num_random] = zsamples @ self._root_cov.T
+        # Sample steps from the multivariate Gaussian
+        structured_part = z_low_rank @ self._root_cov[:, :rank].T
+        noise_part = z_noise @ sqrt(self.integrator._psi).T
+        self._steps[:num_random] = structured_part + noise_part
 
         # Check if a gradient has been provided
         if self.gradient is not None:
@@ -317,7 +563,8 @@ class CMAES:
             gradient = self.gradient(self._mean)
 
             # Compute the unscaled natural gradient
-            natural_gradient = self._cov @ gradient
+            natural_gradient = self._root_cov[:, :rank] @ (
+                self._root_cov[:, :rank].T @ gradient)
 
             # Compute the rescaling factor
             rescale = 1 / (sqrt(gradient @ natural_gradient) + 1e-15)
@@ -407,7 +654,7 @@ class CMAES:
             else:
 
                 # Set the gamma factor < 1
-                gamma_factor = 0.99
+                gamma_factor = 0.95
 
             # Adapt the penalty factor
             self._gamma = clip(self._gamma * gamma_factor, 1e-5, 1e10)
@@ -445,7 +692,7 @@ class CMAES:
             self,
             fitness):
         """
-        Update the state variables.
+        Update the adaptive variables.
 
         Parameters
         ----------
@@ -453,60 +700,122 @@ class CMAES:
             Fitness values of the new population.
         """
 
-        # Update the state variables
-        path_sigma_new, mean_new, sigma_new, path_cov_new, cov_new = _tell(
+        # Get the current rank
+        rank_old = self.integrator.rank
+
+        # Get the eigenvalues and eigenvectors of the singular value matrix
+        ev, eq = self._core_eig_cache
+
+        # Update the basic variables
+        self._sigma, elite_indices = _tell(
             fitness,
             self._steps,
             self._weights,
-            self._basis,
-            self._core_vector,
+            self._left_basis[:, :rank_old],
             self._path_sigma,
             self._path_cov,
             self._mean,
             self._sigma,
-            self._cov,
+            ev[:rank_old],
+            eq[:rank_old, :rank_old],
             self._lr_sigma,
             self._lr_cov,
             self._lr_mean,
-            self._lr_rank_one,
-            self._lr_rank_mu,
             self._mu_eff,
             self._damp_sigma,
             self._expected_path_length,
             self._opt_iter,
-            self._elite_size
-            )
+            self._elite_size)
 
-        # Save the state variables
-        self._path_sigma = path_sigma_new
-        self._mean = mean_new
-        self._sigma = sigma_new
-        self._path_cov = path_cov_new
-        self._cov = cov_new
+        # Get the elite steps
+        take(self._steps, elite_indices, axis=0, out=self._elite_steps)
 
-        # Check if the low-rank factors should be updated
+        # Check if the dynamical low-rank factors should be updated
         if self._opt_iter % self._update_interval == 0:
 
-            # Update the low-rank factors via eigendecomposition
-            self._core_vector, self._basis = eigh(
-                self._cov, overwrite_a=False, check_finite=False
-                )
+            # Copy the current basis to the buffer
+            copyto(
+                self._left_basis_old[:, :rank_old],
+                self._left_basis[:, :rank_old])
 
-            # Sort the singular values and vectors in descending order
-            self._core_vector = self._core_vector[::-1]
-            self._basis = asfortranarray(self._basis[:, ::-1])
+            # Update the dynamical low-rank factors
+            U_new, S_new, _ = self.integrator.update(
+                self._left_basis[:, :rank_old], self._core_matrix,
+                self._left_basis[:, :rank_old], self._lr_cov)
 
-            # Clip the singular values
-            maximum(self._core_vector, 1e-12, out=self._core_vector)
+            #
+            rank_new = U_new.shape[1]
+
+            #
+            copyto(self._left_basis[:, :rank_new], U_new)
+            self._core_matrix = S_new
+
+            # Rotate the evolution paths
+            projection = (
+                self._left_basis[:, :rank_new].T
+                @ self._left_basis_old[:, :rank_old])
+            self._path_sigma = (projection @ self._path_sigma).flatten()
+            self._path_cov = (projection @ self._path_cov).reshape(-1, 1)
+
+            # Check if the rank has changed
+            if rank_new != rank_old:
+
+                # Update the dynamic parameters
+                self._update_dynamics()
+
+            # Update the eigenvalues and -vectors of the singular value matrix
+            ev, eq = eigh(
+                self._core_matrix, overwrite_a=True, check_finite=False)
+
+            # Sort in descending order
+            ev, eq = ev[::-1], eq[:, ::-1]
+
+            # Clip the eigenvalues
+            maximum(ev, 1e-15, out=ev)
+
+            # Update the eigendecomposition cache
+            self._core_eig_cache = (ev, eq)
 
             # Update the sampling matrix
-            sqrt_core = sqrt(self._core_vector)
-            self._root_cov = asfortranarray(self._basis * sqrt_core)
+            matmul(
+                self._left_basis[:, :rank_new], eq * sqrt(ev),
+                out=self._root_cov[:, :rank_new])
 
-            # Reconstruct the covariance matrix
-            self._cov = (
-                (self._basis * self._core_vector) @ self._basis.T
+            #
+            diagonal_block = self._root_cov[:, rank_new:]
+            diagonal_block.fill(0.0)
+            fill_diagonal(diagonal_block, sqrt(self.integrator._psi))
+
+    def _update_dynamics(self):
+        """Update the dynamic parameters for the current rank."""
+
+        # Get the current rank
+        rank = self.integrator.rank
+
+        # Update the learning rates
+        self._lr_sigma = (self._mu_eff + 2) / (rank + self._mu_eff + 5)
+        self._lr_cov = (
+            (4 + self._mu_eff / rank) / (rank + 4 + 2*self._mu_eff / rank)
+            )
+        self._lr_rank_one = 2 / ((rank + 1.3)**2 + self._mu_eff)
+        self._lr_rank_mu = min(
+            1.0 - self._lr_rank_one,
+            2.0 * (
+                (0.25 + self._mu_eff + 1.0 / self._mu_eff - 2.0) /
+                ((rank + 2.0)**2 + 2.0 * self._mu_eff / 2.0)
                 )
+            )
+        self._lr_mean = 1.0
+
+        # Update the damping coefficient
+        self._damp_sigma = (
+            1.0
+            + 2.0 * max(0.0, sqrt((self._mu_eff - 1.0) / (rank + 1.0)) - 1.0)
+            + self._lr_sigma)
+
+        # Initialize the expected path length
+        self._expected_path_length = (
+            sqrt(rank) * (1.0 - 1.0 / (4.0 * rank) + 1.0 / (21.0 * rank**2)))
 
     def optimize(
             self,
@@ -639,11 +948,11 @@ class CMAES:
             return True
 
         # Get the maximum and minimum eigenvalue
-        max_eval = nmax(self._core_vector)
-        min_eval = nmin(self._core_vector)
+        max_ev = nmax(diag(self._core_matrix))
+        min_ev = nmin(diag(self._core_matrix))
 
         # Check if any eigenvalue is zero or the condition number explodes
-        if min_eval <= 0 or (max_eval / (min_eval + 1e-15)) >= 1e14:
+        if min_ev <= 0 or (max_ev / min_ev + 1e-15) >= 1e14:
 
             # Add the solver info
             self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'
@@ -663,16 +972,15 @@ class CMAES:
         if len(self._fitness_history) == self._fitness_history.maxlen:
 
             # Convert the history to a list
-            history = array(self._fitness_history)
+            history = list(self._fitness_history)
 
-            # Get the mean fitness
-            fit_mean = nmean(history)
+            # Get the best and worst fitness within the window
+            min_fit = nmin(history)
+            max_fit = nmax(history)
+            abs_range = max_fit - min_fit
 
-            # Get the fitness range
-            fit_range = ptp(history)
-
-            # Check if the absolute fitness range is below tolerance
-            if fit_range < self.tolerance:
+            # Check if the absolute median difference is below tolerance
+            if abs_range < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (
@@ -681,7 +989,7 @@ class CMAES:
                 return True
 
             # Check if the relative median difference is below tolerance
-            if fit_range / (nabs(fit_mean) + 1e-15) < self.tolerance:
+            if abs_range / (nabs(min_fit) + 1e-15) < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (
@@ -693,7 +1001,9 @@ class CMAES:
         longest_axis = self._root_cov[:, argmax(norm(self._root_cov, axis=0))]
 
         # Check if the mean is not shifted along the longest axis
-        if all(self._mean == self._mean + 0.1 * self._sigma * longest_axis):
+        if allclose(
+                self._mean, self._mean + 0.1 * self._sigma * longest_axis,
+                rtol=0.0, atol=1e-15):
 
             # Add the solver info
             self._result['solver_info'] = 'NO_EFFECT_AXIS'
@@ -703,88 +1013,54 @@ class CMAES:
         return False
 
 
-# Set the variable types
-f8_1d = types.float64[:]
-f8_1d_c = types.float64[::1]
-f8_2d = types.float64[:, :]
-f8_2d_f = types.float64[::1, :]
-f8 = types.float64
-i8 = types.int64
-
-@njit(
-    types.Tuple((f8_1d, f8_1d, f8, f8_1d, f8_2d))(
-        # Return: path_sigma, mean, sigma, path_cov, cov
-        f8_1d,          # fitness
-        f8_2d,          # steps
-        f8_1d_c,        # weights
-        f8_2d_f,        # basis
-        f8_1d,          # core_vector
-        f8_1d,          # path_sigma
-        f8_1d,          # path_cov
-        f8_1d,          # mean
-        f8,             # sigma
-        f8_2d,          # cov
-        f8,             # lr_sigma
-        f8,             # lr_cov
-        f8,             # lr_mean
-        f8,             # lr_rank_one
-        f8,             # lr_rank_mu
-        f8,             # mu_eff
-        f8,             # damp_sigma
-        f8,             # expected_path_length
-        i8,             # opt_iter
-        i8              # elite_size
-        ),
-    fastmath=True
-    )
+@njit("Tuple((float64, int64[:]))(float64[:], float64[:,:], float64[::1], "
+      "float64[::1,:], float64[:], float64[:,:], float64[:], float64, "
+      "float64[:], float64[:,:], float64, float64, float64, float64, float64, "
+      "float64, int64, int64)", fastmath=True)
 def _tell(
-    fitness, steps, weights, basis, core_vector, path_sigma, path_cov, mean,
-    sigma, cov, lr_sigma, lr_cov, lr_mean, lr_rank_one, lr_rank_mu, mu_eff,
-    damp_sigma, expected_path_length, opt_iter, elite_size):
-    """Update the state variables."""
+    fitness, steps, weights, left_basis, path_sigma, path_cov, mean, sigma, ev,
+    eq, lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma, expected_path_length,
+    opt_iter, elite_size):
+    """Update the basic DLR-CMAES variables."""
 
-    # Get the search space dimension
-    dim = mean.size
-
-    # Sort the population by fitness
-    sorted_indices = argsort(fitness)
-    elite_indices = sorted_indices[:elite_size]
+    # Get the indices of the elite fitness values
+    elite_indices = argsort(fitness)[:elite_size]
 
     # Initialize the elite mean step
     elite_weights = weights[:elite_size].reshape(-1, 1)
     elite_mean_step = nsum(
-        steps[elite_indices] * elite_weights, axis=0
-        )
+        steps[elite_indices] * elite_weights, axis=0)
 
     # Calculate the inverse rooted eigenvalues
-    inv_root_core_vec = 1.0 / (sqrt(core_vector) + 1e-15)
+    inv_root_ev = 1.0 / (sqrt(ev) + 1e-15)
 
     # Transform the elite mean step
-    latent_step = basis.T @ elite_mean_step
-    elite_mean_step_tr = basis @ (inv_root_core_vec * latent_step)
+    latent_mean_step = left_basis.T @ elite_mean_step
+    eq_step = eq.T @ latent_mean_step
+    latent_step_whitened = eq @ (inv_root_ev * eq_step)
 
     # Update the step-size evolution path
     path_sigma *= (1.0 - lr_sigma)
     path_sigma += (
-        sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff) * elite_mean_step_tr
+        sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff) * latent_step_whitened
         )
 
     # Get the norm of the step-size evolution path
     ps_norm = norm(path_sigma)
 
-    # Update the mean
-    mean += (lr_mean * sigma) * elite_mean_step
-
     # Update the step size
-    sigma = sigma * exp(
+    sigma_update = sigma * exp(
         (lr_sigma / damp_sigma) * (ps_norm / expected_path_length - 1.0)
         )
 
     # Check if the updated sigma is lower than 1e-15
-    if sigma < 1e-15:
+    if sigma_update < 1e-15:
 
         # Clip to 1e-15
-        sigma = 1e-15
+        sigma_update = 1e-15
+
+    # Update the mean
+    mean += (lr_mean * sigma) * elite_mean_step
 
     # Compute the update switch for the covariance evolution path
     update_switch = (
@@ -803,48 +1079,4 @@ def _tell(
     # Update the covariance evolution path with the elite mean step
     path_cov += coeff * elite_mean_step
 
-    # Get the adjusted rank-1 learning rate
-    lr_rank_one_adj = (1.0-update_switch) * lr_rank_one * lr_cov * (2.0-lr_cov)
-
-    # Synchronize steps and weights with sorted fitness order
-    steps_sorted = steps[sorted_indices]
-    weights_sorted = weights.copy()
-
-    # Get the indices for the negative weights
-    neg_indices = where(weights_sorted < 0.0)[0]
-
-    # Check if any negative weights are present
-    if len(neg_indices) > 0:
-
-        # Extract negative steps into a contiguous block
-        steps_neg = steps_sorted[neg_indices]
-
-        # Perform an isotropic transformation
-        steps_neg_tr = (basis.T @ steps_neg.T).T * inv_root_core_vec
-
-        # Get the squared norms of the isotropic vectors
-        squared_z_norms = nsum(steps_neg_tr**2, axis=1)
-
-        # Get the scaling factors
-        factors = dim / (squared_z_norms + 1e-15)
-
-        # Rescale the weights to guarantee positive definiteness
-        weights_sorted[neg_indices] *= minimum(1.0, factors)
-
-        # Enumerate the indices of the negative weights
-        for i, index in enumerate(neg_indices):
-
-            # Adjust the sorted weights
-            weights_sorted[index] *= min(1.0, factors[i])
-
-    # Compute the rank-mu term for the covariance
-    rank_mu_term = (
-        (steps_sorted.T * weights_sorted.reshape(1, -1)) @ steps_sorted
-        )
-
-    # Update the covariance matrix
-    cov *= (1.0 - lr_rank_one - lr_rank_mu + lr_rank_one_adj)
-    cov += lr_rank_one * outer(path_cov, path_cov)
-    cov += lr_rank_mu * rank_mu_term
-
-    return path_sigma, mean, sigma, path_cov, cov
+    return sigma_update, elite_indices

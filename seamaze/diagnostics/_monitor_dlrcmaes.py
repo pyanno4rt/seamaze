@@ -4,7 +4,7 @@
 
 # %% External package import
 
-from numpy import diag, mean, ndarray
+from numpy import mean, ndarray
 from numpy.linalg import norm
 
 # %% Internal package import
@@ -18,7 +18,7 @@ class MonitorDLRCMAES:
     """
     DLR-CMA-ES monitor class.
 
-    This class implements a monitoring system for tracking optimization \
+    This class implements a monitoring system for tracking optimization
     parameters of DLR-CMA-ES.
 
     Parameters
@@ -27,15 +27,15 @@ class MonitorDLRCMAES:
         Frequency of data collection. Defaults to 1.
 
     mode : {'interactive', 'silent'}, default='silent'
-        The monitoring mode. If 'interactive', an interactive 2D \
-        visualization of the optimization progress is displayed.
+        The monitoring mode. If 'interactive', an interactive visualization of
+        the optimization progress is displayed.
 
     plot_bounds : tuple, list or ndarray, default=None
-        Visualization bounds as coordinate pairs ((x1, y1), (x2, y2)). Only \
+        Visualization bounds as coordinate pairs ((x1, y1), (x2, y2)). Only
         used (and mandatory) if mode is set to 'interactive'.
 
     delay : int or float, default=0.001
-        The time of delay for interactive plotting (in seconds). Only used if \
+        The time of delay for interactive plotting (in seconds). Only used if
         mode is set to 'interactive'.
     """
 
@@ -53,7 +53,7 @@ class MonitorDLRCMAES:
         self.delay = delay
 
         # Initialize the visualizer
-        self._visualizer = None
+        self.visualizer = None
 
         # Initialize the data dictionary
         self._data = {}
@@ -63,6 +63,10 @@ class MonitorDLRCMAES:
 
         # Initialize the last mean vector
         self._last_mean = None
+
+        # Initialize the covariance matrix and singular values
+        self._cov = None
+        self._svs = None
 
     @property
     def data(self):
@@ -127,36 +131,34 @@ class MonitorDLRCMAES:
             if self.mode == 'interactive':
 
                 # Initialize the visualizer
-                self._visualizer = Visualizer(
+                self.visualizer = Visualizer(
                     bounds=self.plot_bounds,
                     dimensions=solver._number_of_variables,
                     pop_size=solver._pop_size)
 
             # Get the static parameters
             parameters = {
-                'number_of_variables': solver._number_of_variables,
                 'bounds': (
                     solver.lower_variable_bounds,
                     solver.upper_variable_bounds
                     ),
-                # integrator variables ..
-                'max_iter': solver.maximum_iterations,
-                'max_time': solver.maximum_wall_time,
-                'fitness_threshold': solver.fitness_threshold,
-                'sigma_threshold': solver.sigma_threshold,
-                'tolerance': solver.tolerance,
-                'update_interval': solver._update_interval,
-                'pop_size': solver._pop_size,
+                'damp_sigma': solver._damp_sigma.item(),
                 'elite_size': solver._elite_size,
-                'weights': solver._weights,
-                'mu_eff': solver._mu_eff.item(),
-                'lr_sigma': solver._lr_sigma.item(),
+                'expected_path_length': solver._expected_path_length.item(),
+                'fitness_threshold': solver.fitness_threshold,
                 'lr_cov': solver._lr_cov,
+                'lr_mean': solver._lr_mean,
                 'lr_rank_one': solver._lr_rank_one.item(),
                 'lr_rank_mu': solver._lr_rank_mu.item(),
-                'lr_mean': solver._lr_mean,
-                'damp_sigma': solver._damp_sigma.item(),
-                'expected_path_length': solver._expected_path_length.item()
+                'lr_sigma': solver._lr_sigma.item(),
+                'max_iter': solver.maximum_iterations,
+                'max_time': solver.maximum_wall_time,
+                'mu_eff': solver._mu_eff.item(),
+                'number_of_variables': solver._number_of_variables,
+                'pop_size': solver._pop_size,
+                'sigma_threshold': solver.sigma_threshold,
+                'tolerance': solver.tolerance,
+                'weights': solver._weights,
                 }
 
             # Loop over the parameter dictionary
@@ -171,38 +173,54 @@ class MonitorDLRCMAES:
         # Check if the data should be updated
         if self._counter % self.interval == 0:
 
+            # Pre-store solver variables
+            errors = solver._squared_bound_errors
+            fitness = solver._fitness
+            optimal_value = solver._result['optimal_value'].item()
+
+            # Reproduce the covariance matrix and singular values
+            self._cov = (
+                (solver._basis[:2, :solver.rank]
+                * solver._core_vector[:solver.rank])
+                @ solver._basis[:2, :solver.rank].T)
+            self._cov[0, 0] += solver._psi[0]
+            self._cov[1, 1] += solver._psi[1]
+            self._svs = solver._core_vector
+
             # Check if the interactive plot should be updated
-            if self._visualizer:
+            if self.visualizer:
 
                 # Update the interactive plot
-                self._visualizer.update(
+                self.visualizer.update(
                     iteration=solver._opt_iter,
                     population=solver._population,
                     mean=solver._mean,
-                    cov=solver._root_cov@solver._root_cov.T,
+                    cov=self._cov,
+                    svs=self._svs,
                     sigma=solver._sigma,
-                    fitness=solver._fitness,
-                    squared_bound_errors=solver._squared_bound_errors,
-                    optimal_value=solver._result['optimal_value'].item(),
+                    fitness=fitness,
+                    squared_bound_errors=errors,
+                    optimal_value=optimal_value,
                     delay=self.delay)
 
             # Record the iteration and the current best objective value
             self._record('iteration', solver._opt_iter)
-            self._record(
-                'optimal_value', solver._result['optimal_value'].item())
+            self._record('optimal_value', optimal_value)
 
             # Record the best, mean and worst objective value
-            self._record('best_fitness', min(solver._fitness))
-            self._record('mean_fitness', mean(solver._fitness))
-            self._record('worst_fitness', max(solver._fitness))
+            self._record('best_fitness', min(fitness))
+            self._record('mean_fitness', mean(fitness))
+            self._record('worst_fitness', max(fitness))
 
             # Record the bound violation
-            self._record('max_bound_viol', max(solver._squared_bound_errors))
-            self._record('mean_bound_viol', mean(solver._squared_bound_errors))
+            self._record(
+                'max_bound_viol', 0.0 if errors is None else max(errors))
+            self._record(
+                'mean_bound_viol', 0.0 if errors is None else mean(errors))
             self._record('gamma', solver._gamma)
 
             # Record the integrator rank
-            self._record('int_rank', solver.integrator.rank)
+            self._record('rank', solver.rank)
 
     def full(
             self,
@@ -223,29 +241,29 @@ class MonitorDLRCMAES:
         # Check if the data should be updated
         if self._counter % self.interval == 0:
 
+            # Record the evolution path norms
+            self._record('path_sigma_norm', norm(solver._path_sigma).item())
+            self._record('path_cov_norm', norm(solver._path_cov).item())
+
             # Record the step size
             self._record('sigma', solver._sigma)
 
             # Record the mean vector
-            self._record('mean', solver._mean)
+            mean_vec = solver._mean
+            self._record('mean', mean_vec)
             self._record(
-                'mean_change_norm', norm(solver._mean-self._last_mean).item())
-            self._last_mean = solver._mean.copy()
+                'mean_change_norm', norm(mean_vec-self._last_mean).item())
+            self._last_mean = mean_vec.copy()
 
             # Record the singular values
-            svs = diag(solver._core_matrix)
+            svs = self._svs
             self._record('cov_svs', svs)
 
             # Record the covariance metrics
             max_sv, min_sv = max(svs), min(svs)
-            cov = solver._root_cov@solver._root_cov.T
-            self._record('cov_norm', norm(cov, ord=2).item())
+            self._record('cov_norm', norm(self._cov, ord=2).item())
             self._record('cov_cn', (max_sv / (min_sv + 1e-12)).item())
             self._record('cov_spectr_norm', max_sv.item())
-
-            # Record the evolution path norms
-            self._record('path_sigma_norm', norm(solver._path_sigma).item())
-            self._record('path_cov_norm', norm(solver._path_cov).item())
 
     def __enter__(self):
         """Enter the runtime context and return the monitor object."""
@@ -278,7 +296,7 @@ class MonitorDLRCMAES:
         """
 
         # Check if the interactive visualizer exists
-        if self._visualizer is not None:
+        if self.visualizer is not None:
 
             # Import matplotlib locally
             import matplotlib.pyplot as plt

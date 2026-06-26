@@ -43,7 +43,7 @@ Available benchmark functions are:
 name = 'Rosenbrock'
 
 # Enter the problem dimensionality
-ndim = 10
+ndim = 1000
 
 # Get the benchmark function class
 problems = {
@@ -88,7 +88,8 @@ with MonitorLMMAES(
         tolerance=1e-6,
         sigma_threshold=1e-8,
         min_log_level='debug',
-        callback=monitor.full  # Enable full monitoring
+        callback=monitor.full,  # Enable full monitoring
+        random_state=42
         )
 
     # Optimize the decision variables

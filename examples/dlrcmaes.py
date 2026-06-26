@@ -68,7 +68,7 @@ problem = problems[name](ndim)
 
 # Initialize the monitor as a context manager
 with MonitorDLRCMAES(
-    interval=1, mode='silent', plot_bounds=((-5, -5), (5, 5)),
+    interval=1, mode='interactive', plot_bounds=((-5, -5), (5, 5)),
     delay=0.001) as monitor:
 
     # Initialize the DLR-CMA-ES solver
@@ -80,7 +80,6 @@ with MonitorDLRCMAES(
         # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        low_rank_integrator='symmetricaugBUG',
         low_rank_dimension=None,
         low_rank_tolerance_rel=1e-2,
         low_rank_tolerance_abs=1e-8,
@@ -90,9 +89,9 @@ with MonitorDLRCMAES(
         fitness_window_size=50,
         tolerance=1e-6,
         sigma_threshold=1e-8,
-        update_interval=None,
         min_log_level='debug',
-        callback=monitor.full  # Enable full monitoring
+        callback=monitor.full,  # Enable full monitoring
+        random_state=42
         )
 
     # Optimize the decision variables
@@ -105,7 +104,7 @@ with MonitorDLRCMAES(
     # Select the plots
     plotter.show_objective = True
     plotter.show_fitness = True
-    plotter.show_bound_viol = True
+    plotter.show_bound_viol = False
     plotter.show_step_size = True
     plotter.show_mean_change_norm = True
     plotter.show_sigma_path_norm = True
@@ -117,4 +116,4 @@ with MonitorDLRCMAES(
     plotter.show_integrator_rank = True
 
     # Plot all selected results
-    # ´plotter.plot_all()
+    # plotter.plot_all()

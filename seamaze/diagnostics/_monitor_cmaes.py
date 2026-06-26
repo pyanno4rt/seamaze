@@ -18,7 +18,7 @@ class MonitorCMAES:
     """
     CMA-ES monitor class.
 
-    This class implements a monitoring system for tracking optimization \
+    This class implements a monitoring system for tracking optimization
     parameters of CMA-ES.
 
     Parameters
@@ -27,15 +27,15 @@ class MonitorCMAES:
         Frequency of data collection. Defaults to 1.
 
     mode : {'interactive', 'silent'}, default='silent'
-        The monitoring mode. If 'interactive', an interactive 2D \
+        The monitoring mode. If 'interactive', an interactive visualization of
         visualization of the optimization progress is displayed.
 
     plot_bounds : tuple, list or ndarray, default=None
-        Visualization bounds as coordinate pairs ((x1, y1), (x2, y2)). Only \
+        Visualization bounds as coordinate pairs ((x1, y1), (x2, y2)). Only
         used (and mandatory) if mode is set to 'interactive'.
 
     delay : int or float, default=0.001
-        The time of delay for interactive plotting (in seconds). Only used if \
+        The time of delay for interactive plotting (in seconds). Only used if
         mode is set to 'interactive'.
     """
 
