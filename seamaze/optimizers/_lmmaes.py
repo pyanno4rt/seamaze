@@ -185,17 +185,13 @@ class LMMAES:
         # Determine the sums of positive and negative base weights
         bw_pos_sum = nsum(base_weights[:self._elite_size])
 
-        # Adapt the weights
-        self._weights = zeros(self._pop_size, dtype=float64)
-        self._weights[:self._elite_size] = (
+        # Set the weights
+        self._weights = (
             base_weights[:self._elite_size] / bw_pos_sum
-            )
+            ).reshape(-1, 1)
 
         # Initialize the variance effective selection mass
-        self._mu_eff = (
-            nsum(self._weights[:self._elite_size])**2
-            / nsum(self._weights[:self._elite_size]**2)
-            )
+        self._mu_eff = nsum(self._weights)**2 / nsum(self._weights**2)
 
         # Initialize the learning rates
         epsilon = 1e-12
@@ -757,7 +753,7 @@ def _transform_steps(steps, memory, lr_mem, num_iter):
         f8_1d,          # fitness
         f8_2d,          # zsamples
         f8_2d,          # steps
-        f8_1d_c,        # weights
+        f8_2d,          # weights
         f8_1d,          # path_sigma
         f8_1d,          # mean
         f8,             # sigma
@@ -774,17 +770,16 @@ def _transform_steps(steps, memory, lr_mem, num_iter):
     fastmath=True
     )
 def _tell(
-    fitness, zsamples, steps, weights, path_sigma, mean, sigma, memory,
+    fitness, zsamples, steps, elite_weights, path_sigma, mean, sigma, memory,
     lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma, expected_path_length,
     elite_size, memory_size):
     """Update the state variables."""
 
-    # Sort the population by fitness
+    # Get the elite indices
     sorted_indices = argsort(fitness)
     elite_indices = sorted_indices[:elite_size]
 
     # Initialize the elite mean step
-    elite_weights = weights[:elite_size].reshape(-1, 1)
     elite_mean_step = nsum(
         steps[elite_indices] * elite_weights, axis=0
         )
@@ -794,13 +789,13 @@ def _tell(
         zsamples[elite_indices] * elite_weights, axis=0
         )
 
-    # Update the step-size evolution path
+    # Update the step size evolution path
     path_sigma *= (1.0 - lr_sigma)
     path_sigma += (
         sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff) * latent_step
         )
 
-    # Get the norm of the step-size evolution path
+    # Get the norm of the step size evolution path
     ps_norm = norm(path_sigma)
 
     # Update the mean

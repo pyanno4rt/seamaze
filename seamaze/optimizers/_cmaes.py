@@ -212,7 +212,7 @@ class CMAES:
             )
         self._lr_mean = 1.0
 
-        # Adjust the weights to ensure positive definiteness
+        # Determine the alpha values
         alpha_mu_neg = 1.0 + self._lr_rank_one / (self._lr_rank_mu + 1e-12)
         alpha_mu_eff_neg = 1.0 + (2.0 * mu_eff_neg) / (self._mu_eff + 2.0)
         alpha_posdef_neg = (
@@ -221,11 +221,12 @@ class CMAES:
             )
         alpha_min = min(alpha_mu_neg, alpha_mu_eff_neg, alpha_posdef_neg)
 
+        # Set the weights
         self._weights = where(
             base_weights > 0,
             (1.0 / bw_pos_sum) * base_weights,
             (alpha_min / (abs(bw_neg_sum) + 1e-12)) * base_weights
-            )
+            ).reshape(-1, 1)
 
         # Initialize the damping coefficient
         self._damp_sigma = (
@@ -716,7 +717,7 @@ i8 = types.int64
         # Return: path_sigma, mean, sigma, path_cov, cov
         f8_1d,          # fitness
         f8_2d,          # steps
-        f8_1d_c,        # weights
+        f8_2d,          # weights
         f8_2d_f,        # basis
         f8_1d,          # core_vector
         f8_1d,          # path_sigma
@@ -746,12 +747,12 @@ def _tell(
     # Get the search space dimension
     dim = mean.size
 
-    # Sort the population by fitness
+    # Get the elite indices
     sorted_indices = argsort(fitness)
     elite_indices = sorted_indices[:elite_size]
 
     # Initialize the elite mean step
-    elite_weights = weights[:elite_size].reshape(-1, 1)
+    elite_weights = weights[:elite_size]
     elite_mean_step = nsum(
         steps[elite_indices] * elite_weights, axis=0
         )
@@ -761,15 +762,15 @@ def _tell(
 
     # Transform the elite mean step
     latent_step = basis.T @ elite_mean_step
-    elite_mean_step_tr = basis @ (inv_root_core_vec * latent_step)
+    elite_mean_step_tr = inv_root_core_vec * latent_step
 
-    # Update the step-size evolution path
+    # Update the step size evolution path
     path_sigma *= (1.0 - lr_sigma)
     path_sigma += (
         sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff) * elite_mean_step_tr
         )
 
-    # Get the norm of the step-size evolution path
+    # Get the norm of the step size evolution path
     ps_norm = norm(path_sigma)
 
     # Update the mean
@@ -790,7 +791,7 @@ def _tell(
     update_switch = (
         1.0
         if ps_norm / sqrt(1.0 - (1.0 - lr_sigma)**(2.0 * opt_iter))
-        < (1.4 + 2.0/(mean.shape[0] + 1.0)) * expected_path_length
+        < (1.4 + 2.0/(mean.size + 1.0)) * expected_path_length
         else 0.0
         )
 
@@ -830,12 +831,6 @@ def _tell(
 
         # Rescale the weights to guarantee positive definiteness
         weights_sorted[neg_indices] *= minimum(1.0, factors)
-
-        # Enumerate the indices of the negative weights
-        for i, index in enumerate(neg_indices):
-
-            # Adjust the sorted weights
-            weights_sorted[index] *= min(1.0, factors[i])
 
     # Compute the rank-mu term for the covariance
     rank_mu_term = (

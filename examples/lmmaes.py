@@ -43,7 +43,7 @@ Available benchmark functions are:
 name = 'Rosenbrock'
 
 # Enter the problem dimensionality
-ndim = 1000
+ndim = 10
 
 # Get the benchmark function class
 problems = {

@@ -14,8 +14,8 @@ from math import inf
 from numba import njit, types
 from numpy import (
     add, arange, argmax, argmin, argsort, array, ascontiguousarray, clip, diag,
-    exp, eye, float64, full, isinf, isnan, log, maximum, minimum, ptp, ones,
-    outer, sqrt, where, zeros)
+    exp, eye, float64, full, isinf, log, maximum, minimum, ptp, ones, outer,
+    sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import any as nany
 from numpy import max as nmax
@@ -75,12 +75,6 @@ class DLRCMAES:
     low_rank_dimension : int, default=None
         Initial rank of the approximation. Defaults to `number_of_variables`.
 
-    low_rank_tolerance_rel : float, default=1e-2
-        Relative tolerance of the rank truncation.
-
-    low_rank_tolerance_abs : float, default=1e-8
-        Absolute tolerance of the rank truncation.
-
     maximum_iterations : int, default=100000
         Maximum number of generations (iterations) to run before stopping.
 
@@ -125,8 +119,6 @@ class DLRCMAES:
             number_of_individuals=None,
             initial_sigma=0.3,
             low_rank_dimension=None,
-            low_rank_tolerance_rel=1e-2,
-            low_rank_tolerance_abs=1e-8,
             maximum_iterations=100000,
             maximum_wall_time=43200,
             fitness_threshold=-inf,
@@ -191,7 +183,7 @@ class DLRCMAES:
         # Initialize the base weights
         self._base_weights = (
             log((self._pop_size + 1) / 2) - log(arange(1, self._pop_size + 1))
-            )
+            ).reshape(-1, 1)
 
         # Initialize the elite size
         self._elite_size = int(nsum(self._base_weights > 0))
@@ -216,13 +208,9 @@ class DLRCMAES:
         self._lr_rank_one = 0.0
         self._lr_rank_mu = 0.0
         self._lr_mean = 1.0
-        self._weights = None
-        self._weights_2d = None
+        self._weights = zeros((self._pop_size, 1), dtype=float64)
         self._damp_sigma = 0.0
         self._expected_path_length = 0.0
-
-        self._weights = zeros(self._pop_size, dtype=float64)
-        self._weights_2d = self._weights.reshape(-1, 1)
 
         # Update the dynamic variables
         self._update_dynamics()
@@ -253,11 +241,9 @@ class DLRCMAES:
             self._number_of_variables, order='F', dtype=float64
             )
         self._core_vector = ones(self.rank, dtype=float64)
-        self._core_evals = ones(self.rank, dtype=float64)
-        self._core_evecs = eye(self.rank, dtype=float64)
 
         self._psi = full(
-            self._number_of_variables, 1e-3, dtype=float64
+            self._number_of_variables, 1.0, dtype=float64
             )
 
         # Initialize the stopping criteria and tracking variables
@@ -300,7 +286,7 @@ class DLRCMAES:
         # Initialize the default mean learning rate
         self._lr_mean = 1.0
 
-        # Adjust the base weights to ensure positive definiteness
+        # Determine the alpha values
         alpha_mu_neg = 1.0 + self._lr_rank_one / (self._lr_rank_mu + 1e-12)
         alpha_mu_eff_neg = (
             1.0 + (2.0 * self._mu_eff_neg) / (self._mu_eff + 2.0)
@@ -322,9 +308,6 @@ class DLRCMAES:
             (alpha_min / (nabs(self._bw_neg_sum) + 1e-12))
             * self._base_weights[~pos_mask]
             )
-
-        # Create a 2D view of the weights
-        self._weights_2d = self._weights.reshape(-1, 1)
 
         # Initialize the damping coefficient (depending on rank)
         self._damp_sigma = (
@@ -520,14 +503,13 @@ class DLRCMAES:
         rank = self.rank
 
         # Update the state variables
-        (elite_indices, path_sigma_new, sigma_new, mean_new,
-         path_cov_new)  = _tell(
+        (elite_indices, path_sigma_new, sigma_new, mean_new, path_cov_new,
+         update_switch)  = _tell(
             fitness,
             self._steps,
             self._weights,
             self._basis[:, :rank],
-            self._core_evals,
-            self._core_evecs,
+            self._core_vector,
             self._path_sigma[:rank],
             self._path_cov[:rank],
             self._mean,
@@ -557,10 +539,12 @@ class DLRCMAES:
             self._core_vector,
             self._psi,
             self._steps[elite_indices],
-            self._weights_2d,
+            self._weights,
             self._path_cov[:rank],
+            self._lr_cov,
             self._lr_rank_one,
             self._lr_rank_mu,
+            update_switch=update_switch,
             force_expansion=self.check_rank_expansion()
             )
 
@@ -592,10 +576,6 @@ class DLRCMAES:
         # Assign the rotated sigma and covariance evolution path
         self._path_sigma[:rank_new] = rotated_path_sigma
         self._path_cov[:rank_new] = rotated_path_cov
-
-        # Populate the eigenvalue cache
-        self._core_evals = core_vector_new
-        self._core_evecs = eye(rank_new, dtype=float64)
 
         # Update the dynamic variables
         self._update_dynamics()
@@ -711,8 +691,7 @@ class DLRCMAES:
         required = 2
 
         # Compute the eigenvalues of the covariance matrix
-        core_evals = self._core_evals
-        cov_evals = core_evals + self._psi[:rank]
+        cov_evals = self._core_vector + self._psi[:rank]
 
         # Get the maximum eigenvalue
         max_eval = nmax(cov_evals)
@@ -808,8 +787,7 @@ class DLRCMAES:
         rank = self.rank
 
         # Compute the eigenvalues of the covariance matrix
-        core_evals = self._core_evals
-        cov_evals = core_evals + self._psi[:rank]
+        cov_evals = self._core_vector + self._psi[:rank]
 
         # Get the maximum eigenvalue
         max_eval = nmax(cov_evals)
@@ -896,14 +874,13 @@ i8 = types.int64
 bo = types.bool_
 
 @njit(
-    types.Tuple((i8_1d, f8_1d, f8, f8_1d, f8_1d))(
+    types.Tuple((i8_1d, f8_1d, f8, f8_1d, f8_1d, f8))(
         # Return: Tuple(elite_indices, path_sigma, sigma, mean, path_cov)
         f8_1d,          # fitness
         f8_2d,          # steps
-        f8_1d,          # weights
+        f8_2d,          # weights
         f8_2d,          # basis
-        f8_1d,          # ev
-        f8_2d,          # eq
+        f8_1d,          # evals
         f8_1d,          # path_sigma
         f8_1d,          # path_cov
         f8_1d,          # mean
@@ -920,9 +897,9 @@ bo = types.bool_
     fastmath=True
     )
 def _tell(
-    fitness, steps, weights, basis, ev, eq, path_sigma, path_cov,
-    mean, sigma, lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma,
-    expected_path_length, opt_iter, elite_size):
+    fitness, steps, weights, basis, core_vector, path_sigma, path_cov, mean,
+    sigma, lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma, expected_path_length,
+    opt_iter, elite_size):
     """Update the state variables."""
 
     # Get the elite indices
@@ -931,31 +908,24 @@ def _tell(
 
     # Initialize the elite mean step
     elite_weights = weights[:elite_size]
-    dim = mean.size
-    elite_mean_step = zeros(dim, dtype=float64)
-    for i in range(elite_size):
-        idx = elite_indices[i]
-        for j in range(dim):
-            elite_mean_step[j] += steps[idx, j] * elite_weights[i]
+    elite_mean_step = nsum(
+        steps[elite_indices] * elite_weights, axis=0
+        )
 
     # Calculate the inverse rooted eigenvalues
-    inv_root_core_vec = 1.0 / (sqrt(ev) + 1e-15)
+    inv_root_core_vec = 1.0 / (sqrt(core_vector) + 1e-15)
 
     # Transform the elite mean step
     latent_step = basis.T @ elite_mean_step
+    elite_mean_step_tr = inv_root_core_vec * latent_step
 
-    #
-    eq_step = eq.T @ latent_step
-    eq_contiguous = ascontiguousarray(eq)
-    latent_step_whitened = eq_contiguous @ (inv_root_core_vec * eq_step)
-
-    # Update the step-size evolution path
+    # Update the step size evolution path
     path_sigma *= (1.0 - lr_sigma)
     path_sigma += (
-        sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff) * latent_step_whitened
+        sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff) * elite_mean_step_tr
         )
 
-    # Get the norm of the step-size evolution path
+    # Get the norm of the step size evolution path
     ps_norm = norm(path_sigma)
 
     # Update the mean
@@ -969,7 +939,7 @@ def _tell(
     # Check if the updated sigma is lower than 1e-15
     if sigma < 1e-15:
 
-        #
+        # Clip to 1e-15
         sigma = 1e-15
 
     # Compute the update switch for the covariance evolution path
@@ -983,205 +953,183 @@ def _tell(
     # Compute the 'keep' term of the covariance evolution path
     path_cov *= (1.0 - lr_cov)
 
-    # Precompute the coefficient
+    # Pre-compute the coefficient
     coeff = update_switch * sqrt(lr_cov * (2.0 - lr_cov) * mu_eff)
 
     # Update the covariance evolution path with the elite mean step
     path_cov += coeff * latent_step
 
-    return elite_indices, path_sigma, sigma, mean, path_cov
+    return elite_indices, path_sigma, sigma, mean, path_cov, update_switch
 
 
-@njit(
-    types.Tuple((f8_2d, f8_1d, f8_1d, i8))(
-        # Return: Tuple(basis_new, ev_new, psi_new, rank_new)
-        f8_2d,          # basis
-        f8_1d,          # core_vector
-        f8_1d,          # psi
-        f8_2d,          # elite_steps
-        f8_2d,          # weights_2d
-        f8_1d,          # path_cov
-        f8,             # lr_rank_one
-        f8,             # lr_rank_mu
-        bo              # force_expansion
-        ),
-    fastmath=True
-    )
+# @njit(
+#     types.Tuple((f8_2d, f8_1d, f8_1d, i8))(
+#         # Return: Tuple(basis_new, ev_new, psi_new, rank_new)
+#         f8_2d,          # basis
+#         f8_1d,          # core_vector
+#         f8_1d,          # psi
+#         f8_2d,          # elite_steps
+#         f8_2d,          # weights
+#         f8_1d,          # path_cov
+#         f8,             # lr_cov
+#         f8,             # lr_rank_one
+#         f8,             # lr_rank_mu
+#         f8,             # update_switch
+#         bo              # force_expansion
+#         ),
+#     fastmath=True
+#     )
 def _spd_bug_step(
-    basis, core_vector, psi, elite_steps, weights_2d, path_cov,
-    lr_rank_one, lr_rank_mu, force_expansion):
+        basis, core_vector, psi, elite_steps, weights, path_cov, lr_cov,
+        lr_rank_one, lr_rank_mu, update_switch, force_expansion):
     """Perform the SPD-BUG step with adaptive rank truncation."""
 
-    # Get the dimensionality and rank
+    from numpy import hstack, isfinite, newaxis, nan_to_num, sign
+    from numpy.linalg import LinAlgError
+
     dim, rank = basis.shape
-
-    # Set the maximum rank (twice the rank for augmentation)
     max_rank = min(2 * rank, dim)
-    aug_size = max_rank - rank
 
-    # Get the elite size
-    elite_size = elite_steps.shape[0]
+    # 0. Berechne den angepassten Term genau wie im klassischen CMA-ES
+    lr_rank_one_adj = (1.0 - update_switch) * lr_rank_one * lr_cov * (2.0 - lr_cov)
 
-    # Prepare matrices for BLAS vectorization
-    basis_contiguous = ascontiguousarray(basis)
-    elite_steps_contiguous = ascontiguousarray(elite_steps)
+    # Fortlaufenden Speicher garantieren
+    B = ascontiguousarray(basis)
 
-    # Diagonalize the core vector
-    S = diag(core_vector)
+    # 1. Prüfen, ob die Richtung 'psi' den Unterraum erweitern kann
+    projection_weights = B.T @ psi
+    psi_orthogonal = psi - B @ projection_weights
+    psi_norm = norm(psi_orthogonal)
 
-    # Expand the basis
-    K = basis_contiguous @ S
+    # CMA-ES Dämpfung auf das alte Kernsystem anwenden
+    c_decay = 1.0 - lr_rank_one - lr_rank_mu + lr_rank_one_adj
 
-    # Project the evolution path
-    path_cov_low = path_cov.copy()
-    path_cov_full = basis_contiguous @ path_cov_low
+    if psi_norm > 1e-10 and rank < max_rank:
+        # Basis temporär um die neue orthogonale Richtung erweitern
+        psi_new_dir = psi_orthogonal / psi_norm
+        B_augmented = hstack([B, psi_new_dir[:, newaxis]])
 
-    #
-    K += lr_rank_one * outer(path_cov_full, path_cov_low)
+        # Altes Kernsystem gedämpft einbetten (Größe: rank + 1)
+        K_expanded = zeros((rank + 1, rank + 1))
+        K_expanded[:rank, :rank] = diag(core_vector * c_decay)
 
-    #
-    elite_proj = elite_steps_contiguous @ basis_contiguous
-
-    #
-    weighted_elite_proj = weights_2d[:elite_size] * elite_proj
-    weighted_elite_proj_contiguous = ascontiguousarray(weighted_elite_proj)
-
-    #
-    K += lr_rank_mu * (
-        elite_steps_contiguous.T.copy() @ weighted_elite_proj_contiguous
-        )
-
-    #
-    diag_basis_proj = ones(dim, dtype=float64)
-
-    #
-    for i in range(dim):
-
-        #
-        for j in range(rank):
-
-            #
-            diag_basis_proj[i] -= basis_contiguous[i, j] ** 2
-
-    #
-    diag_basis_proj = maximum(diag_basis_proj, 1e-8)
-
-    #
-    diag_K = zeros(dim, dtype=float64)
-
-    #
-    for i in range(dim):
-
-        #
-        for j in range(rank):
-
-            #
-            diag_K[i] += K[i, j] * basis_contiguous[i, j]
-
-    # Update and clip the noise term
-    psi_update = 0.1 * (diag_basis_proj * diag_K)
-    psi_new = psi + psi_update
-    psi_new = maximum(psi_new, 1e-3)
-    psi_new = minimum(psi_new, 1.0)
-
-    #
-    K_aug = zeros((dim, max_rank), dtype=float64)
-    K_aug[:, :rank] = K
-    K_aug[:, rank:max_rank] = basis_contiguous[:, :aug_size]
-
-    #
-    basis_aug, _ = qr(K_aug)
-    basis_aug_trimmed = basis_aug[:, :max_rank]
-
-    # Convert the new basis into a contiguous array
-    basis_aug_trimmed_contiguous = ascontiguousarray(basis_aug_trimmed)
-
-    #
-    basis_aug_T_contiguous = ascontiguousarray(basis_aug_trimmed_contiguous.T)
-    M_proj = basis_aug_T_contiguous @ basis_contiguous
-
-    #
-    ext_S = M_proj @ S @ M_proj.T
-    ext_S *= (1.0 - lr_rank_one - lr_rank_mu)
-
-    # Perform rank-1 update
-    p_c_ext = M_proj @ path_cov_low
-    ext_S += lr_rank_one * outer(p_c_ext, p_c_ext)
-
-    # Perform rank-mu update
-    elite_low = elite_steps_contiguous @ basis_aug_trimmed_contiguous
-    weighted_elite_low = weights_2d[:elite_size] * elite_low
-    weighted_elite_low_contiguous = ascontiguousarray(weighted_elite_low)
-    ext_S += lr_rank_mu * (elite_low.T.copy() @ weighted_elite_low_contiguous)
-
-    # Symmetrize the core matrix
-    ext_S += ext_S.T
-    ext_S *= 0.5
-
-    # Extract the eigenvalues and -vectors from the core
-    ev, eq = eigh(ext_S)
-
-    # Get the sorted indices
-    idx = argsort(ev)[::-1]
-
-    # Sort the eigenvalues and -vectors
-    ev_sorted = ev[idx]
-    eq_sorted = eq[:, idx]
-
-    # Loop over the eigenvalue indices
-    for i in range(len(ev_sorted)):
-
-        # Check if the eigenvalue has collapsed or is negative
-        if isnan(ev_sorted[i]) or isinf(ev_sorted[i]) or ev_sorted[i] < 0.0:
-
-            # Fix the eigenvalue to 1e-15
-            ev_sorted[i] = 1e-15
-
-    # Check if the rank should be expanded
-    if force_expansion:
-
-        # Increase the rank by one
-        rank_new = rank + 1
+        # WEGWEISENDE KORREKTUR: path_cov lebt im Unterraum (Größe rank).
+        # Da wir die Basis um 1 erweitert haben, hängen wir eine 0 an den Pfad an.
+        y_path = zeros(rank + 1)
+        y_path[:rank] = path_cov
 
     else:
+        # Keine Erweiterung, Update im bestehenden Unterraum
+        B_augmented = B
+        K_expanded = diag(core_vector * c_decay)
+        # Keine Erweiterung der Basis -> y_path entspricht exakt dem aktuellen path_cov
+        y_path = path_cov
 
-        # Calculate the total energy
-        total_energy = nsum(maximum(ev_sorted, 0.0))
+    # 2. Projektion der hochdimensionalen CMA-ES Update-Terme in den BUG-Unterraum
+    # Rank-One Term: Evolutionspfad projizieren
+    K_rank_one = lr_rank_one * outer(y_path, y_path)
 
-        # Start the new rank at one
-        rank_new = 1
+    # Rank-Mu Term: Projiziere alle Schritte (Form: rank_augmented x pop_size, hier: 1000 x 12)
+    Y_steps = B_augmented.T @ elite_steps.T
 
-        # Check if the total energy is reasonably high
-        if total_energy > 1e-12:
+    # Wie viele Individuen (Spalten) haben wir in dieser Iteration tatsächlich?
+    pop_size_current = Y_steps.shape[1]
 
-            # Initialize the current energy
-            current_energy = 0.0
+    # Wir schneiden die Gewichte exakt auf die Anzahl der aktuellen Individuen zu
+    # und richten sie als Zeilenvektor (1, pop_size) aus
+    w_sliced = weights
 
-            # Loop over the eigenvalue indices
-            for i in range(len(ev_sorted)):
+    # Hocheffizientes spaltenweises Skalieren via Broadcasting:
+    # Jedes Individuum (Spalte) bekommt sein passendes CMA-ES Gewicht.
+    K_rank_mu = lr_rank_mu * ((Y_steps @ w_sliced) @ Y_steps.T)
 
-                # Add the energy of the current dimension
-                current_energy += max(0.0, ev_sorted[i])
+    # 3. Das kombinierte BUG-Kernsystem aufstellen
+    K_total = K_expanded + K_rank_one + K_rank_mu
 
-                # Check if the relative threshold has been passed
-                if current_energy / total_energy <= 1:
+    # Numerischer Schutz gegen NaN/Inf (falls sigma kollabiert)
+    if not isfinite(K_total).all():
+        K_total = nan_to_num(K_total, nan=0.0, posinf=0.0, neginf=0.0)
 
-                    # Set the rank to the number of dimensions evaluated
-                    rank_new = i + 1
+    # Perfekte Symmetrie erzwingen
+    K_total = 0.5 * (K_total + K_total.T)
 
-                    # Escape the loop
-                    break
+    # 4. Eigenwertzerlegung des kleinen Kernsystems (viel stabiler als SVD bei CMA-ES)
+    try:
+        S_new, U_core = eigh(K_total)
 
-    # Clip the rank to [1, d]
-    rank_new = max(rank_new, 1)
-    rank_new = min(rank_new, dim)
+        # Absteigend nach der Größe der Eigenwerte sortieren
+        idx = argsort(S_new)[::-1]
+        S_new = S_new[idx]
+        U_core = U_core[:, idx]
 
-    # Truncate the eigenvalues and -vectors of the core
-    ev_truncated = ev_sorted[:rank_new]
-    eq_truncated = eq_sorted[:, :rank_new]
-    eq_truncated_contiguous = ascontiguousarray(eq_truncated)
+        # Negative Eigenwerte durch numerisches Rauschen abschneiden
+        S_new = clip(S_new, a_min=0.0, a_max=None)
 
-    # Update the basis
-    basis_new = basis_aug_trimmed_contiguous @ eq_truncated_contiguous
+    except LinAlgError:
+        # Fallback bei numerischem Totalausfall
+        dim_k = K_total.shape[0]
+        S_new = ones(dim_k) * 1e-15
+        S_new[:len(core_vector)] = core_vector
+        U_core = eye(dim_k)
 
-    return basis_new, ev_truncated, psi_new, rank_new
+    # 5. Adaptives Abschneiden (Truncation)
+    # =========================================================================
+    if force_expansion:
+        target_rank = min(max_rank, len(S_new))
+        truncated_energy = 0.0
+    else:
+        energy_threshold = 1e-7 * S_new[0] if len(S_new) > 0 else 1e-7
+        keep_mask = S_new > energy_threshold
+        target_rank = nsum(keep_mask)
+
+        # WICHTIG: Berechne die Energie der weggeschnittenen Richtungen!
+        # Diese Varianzen dürfen nicht verpuffen, sondern müssen zurück zu Psi fließen.
+        truncated_energy = nsum(S_new[~keep_mask]) if nsum(~keep_mask) > 0 else 0.0
+
+        # Auf der Sphere darf der Rang ruhig klein werden (z. B. mindestens 2 oder 3)
+        target_rank = max(2, min(target_rank, max_rank))
+
+    # =========================================================================
+    # 6. Rückprojektion & Relativer Floor
+    # =========================================================================
+    new_basis = B_augmented @ U_core[:, :target_rank]
+
+    max_ev = S_new[0]
+    relative_floor = max_ev * 1e-7
+    absolute_floor = 1e-15
+    floor_value = max(relative_floor, absolute_floor)
+
+    new_core = clip(S_new[:target_rank], a_min=floor_value, a_max=None)
+    new_rank = len(new_core)
+
+    # =========================================================================
+    # 7. Numerische Nachreinigung (QR)
+    # =========================================================================
+    new_basis, R = qr(new_basis, mode='reduced')
+    new_basis = new_basis * sign(diag(R))
+
+    # =========================================================================
+    # 8. Dynamisches Psi-Update mit Energie-Rückfluss
+    # =========================================================================
+    # Das alte Psi dämpfen (CMA-ES Dämpfung), genau wie das Kernsystem!
+    psi_decayed = psi * c_decay
+
+    # Der orthogonale Anteil des aktuellen Schritts (Residuum)
+    new_psi_projection = new_basis @ (new_basis.T @ psi_decayed)
+    residual_psi = psi_decayed - new_psi_projection
+
+    # ENERGIE-ERHALTUNG: Wir fügen die weggeschnittene Varianz (verteilt auf die
+    # verbleibenden unstrukturierten Dimensionen) als isotropen Anteil hinzu.
+    unstructured_dims = dim - target_rank
+    if unstructured_dims > 0:
+        isotropic_injection = truncated_energy / unstructured_dims
+        new_psi = residual_psi + isotropic_injection
+    else:
+        new_psi = residual_psi
+
+    # Relativer Bodenschutz auch für Psi, damit es proportional zu S_new mitschrumpft,
+    # anstatt auf einem harten 1e-3 einzufrieren!
+    psi_floor = max_ev * 1e-7
+    new_psi = clip(new_psi, a_min=max(psi_floor, 1e-15), a_max=None)
+
+    return new_basis, new_core, new_psi, new_rank

@@ -68,7 +68,7 @@ problem = problems[name](ndim)
 
 # Initialize the monitor as a context manager
 with MonitorDLRCMAES(
-    interval=1, mode='interactive', plot_bounds=((-5, -5), (5, 5)),
+    interval=1, mode='silent', plot_bounds=((-5, -5), (5, 5)),
     delay=0.001) as monitor:
 
     # Initialize the DLR-CMA-ES solver
@@ -80,9 +80,7 @@ with MonitorDLRCMAES(
         # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        low_rank_dimension=None,
-        low_rank_tolerance_rel=1e-2,
-        low_rank_tolerance_abs=1e-8,
+        low_rank_dimension=3,
         maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,
