@@ -40,7 +40,7 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Sphere'
+name = 'Rosenbrock'
 
 # Enter the problem dimensionality
 ndim = 10
@@ -80,7 +80,7 @@ with MonitorDLRCMAES(
         # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        low_rank_dimension=3,
+        low_rank_dimension=None,
         maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,

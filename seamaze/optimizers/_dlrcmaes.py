@@ -13,17 +13,18 @@ from collections import deque
 from math import inf
 from numba import njit, types
 from numpy import (
-    add, arange, argmax, argmin, argsort, array, ascontiguousarray, clip, diag,
-    exp, eye, float64, full, isinf, log, maximum, minimum, ptp, ones, outer,
-    sqrt, where, zeros)
+    add, arange, argmax, argmin, argsort, array, ascontiguousarray,
+    asfortranarray, clip, diag, exp, eye, float64, full, isinf, log, maximum,
+    minimum, ptp, ones, outer, sqrt, where, zeros)
 from numpy import abs as nabs
+from numpy import all as nall
 from numpy import any as nany
 from numpy import max as nmax
 from numpy import mean as nmean
 from numpy import min as nmin
 from numpy import sum as nsum
-from numpy.linalg import eigh, norm, qr
-from numpy.random import default_rng
+from numpy.linalg import eigh, norm, qr, pinv, svd
+from numpy.random import default_rng, normal
 
 # %% Internal package import
 
@@ -208,7 +209,7 @@ class DLRCMAES:
         self._lr_rank_one = 0.0
         self._lr_rank_mu = 0.0
         self._lr_mean = 1.0
-        self._weights = zeros((self._pop_size, 1), dtype=float64)
+        self._weights = zeros((self._pop_size, 1), order='F', dtype=float64)
         self._damp_sigma = 0.0
         self._expected_path_length = 0.0
 
@@ -225,25 +226,27 @@ class DLRCMAES:
         self._sigma = initial_sigma
 
         self._steps = zeros(
-            (self._pop_size, self._number_of_variables), order='F',
-            dtype=float64
+            (self._pop_size, self._number_of_variables), dtype=float64
             )
         self._population = zeros(
-            (self._pop_size, self._number_of_variables), order='F',
-            dtype=float64
+            (self._pop_size, self._number_of_variables), dtype=float64
             )
 
         self._path_sigma = zeros(self._number_of_variables, dtype=float64)
         self._path_cov = zeros(self._number_of_variables, dtype=float64)
         self._mean = zeros(self._number_of_variables, dtype=float64)
 
+        init_var = 1.0
+        alpha = 0.5
         self._basis = eye(
-            self._number_of_variables, order='F', dtype=float64
+            self._number_of_variables, self.rank, order='F', dtype=float64
             )
-        self._core_vector = ones(self.rank, dtype=float64)
+        self._core = (alpha * init_var) * eye(self.rank, dtype=float64)
+        self._core_evals = (alpha * init_var) * ones(self.rank, dtype=float64)
+        self._core_evecs = eye(self.rank, order='F', dtype=float64)
 
         self._psi = full(
-            self._number_of_variables, 1.0, dtype=float64
+            self._number_of_variables, (1.0 - alpha) * init_var, dtype=float64
             )
 
         # Initialize the stopping criteria and tracking variables
@@ -334,21 +337,19 @@ class DLRCMAES:
             Sample steps.
         """
 
-        # Get the current rank
-        rank = self.rank
-
         # Sample from the standard multivariate Gaussian
         num_random = (
             self._pop_size - 2 if self.gradient is not None
             else self._pop_size
             )
-        z_low_rank = self._rng.standard_normal((num_random, rank))
+        z_low_rank = self._rng.standard_normal((num_random, self.rank))
         z_noise = self._rng.standard_normal(
             (num_random, self._number_of_variables)
             )
 
         # Calculate the root of the covariance matrix
-        root_cov = self._basis[:, :rank] * sqrt(self._core_vector)
+        safe_evals = maximum(self._core_evals, 1e-15)
+        root_cov = self._basis @ (self._core_evecs * sqrt(safe_evals))
 
         # Transform the samples into low-rank and noisy components
         structured_part = z_low_rank @ root_cov.T
@@ -397,12 +398,12 @@ class DLRCMAES:
                 )
 
             # Mirror the violating individuals back into the feasible region
-            self._population = where(
+            self._population[:] = where(
                 self._population < self.lower_variable_bounds,
                 self.lower_variable_bounds + eps_lower,
                 self._population
                 )
-            self._population = where(
+            self._population[:] = where(
                 self._population > self.upper_variable_bounds,
                 self.upper_variable_bounds - eps_upper,
                 self._population
@@ -499,19 +500,18 @@ class DLRCMAES:
             Fitness values of the new population.
         """
 
-        # Get the current rank
-        rank = self.rank
-
         # Update the state variables
-        (elite_indices, path_sigma_new, sigma_new, mean_new, path_cov_new,
-         update_switch)  = _tell(
+        (path_sigma_new, sigma_new, mean_new, path_cov_new, update_switch
+         ) = _tell(
             fitness,
             self._steps,
             self._weights,
-            self._basis[:, :rank],
-            self._core_vector,
-            self._path_sigma[:rank],
-            self._path_cov[:rank],
+            self._basis,
+            self._core_evals,
+            self._core_evecs,
+            self._psi,
+            self._path_sigma,
+            self._path_cov,
             self._mean,
             self._sigma,
             self._lr_sigma,
@@ -525,22 +525,24 @@ class DLRCMAES:
             )
 
         # Save the state variables
-        self._path_sigma[:rank] = path_sigma_new
+        self._path_sigma[:] = path_sigma_new
         self._sigma = sigma_new
-        self._mean = mean_new
-        self._path_cov[:rank] = path_cov_new
+        self._mean[:] = mean_new
+        self._path_cov[:] = path_cov_new
 
         # Store the old basis before updating
-        basis_old = self._basis[:, :rank].copy()
+        basis_old = self._basis.copy()
 
         # Update the low-rank and noise factors
-        basis_new, core_vector_new, psi_new, rank_new = _spd_bug_step(
-            self._basis[:, :rank],
-            self._core_vector,
+        basis_new, core_new, psi_new, rank_new = _spd_bug_step(
+            self._basis,
+            self._core,
+            self._core_evals,
+            self._core_evecs,
             self._psi,
-            self._steps[elite_indices],
+            self._steps[argsort(fitness)],
             self._weights,
-            self._path_cov[:rank],
+            self._path_cov,
             self._lr_cov,
             self._lr_rank_one,
             self._lr_rank_mu,
@@ -548,34 +550,37 @@ class DLRCMAES:
             force_expansion=self.check_rank_expansion()
             )
 
-        # Compute the rotation matrix (from basis_old to basis_new)
+        # 1. Berechne die r x r Transformationsmatrix
         projection_matrix = basis_new.T @ basis_old
 
-        # Rotate the step size evolution path
-        rotated_path_sigma = projection_matrix @ self._path_sigma[:rank]
+        # 2. Projiziere den voll-dimensionalen Pfad auf die alte Basis,
+        # um Koordinaten der Länge (rank,) zu erhalten
+        path_cov_old = basis_old.T @ self._path_cov
 
-        # Rotate the covariance evolution path
-        rotated_path_cov = projection_matrix @ self._path_cov[:rank]
+        # 3. Wende die Basenverschiebung an -> ergibt Koordinaten im neuen Raum
+        path_cov_new = projection_matrix @ path_cov_old
+
+        # 4. Zurück in den voll-dimensionalen Raum einbetten
+        self._path_cov = basis_new @ path_cov_new
 
         # Check if the subspace shrinks
-        if rank_new < rank:
+        if rank_new < self.rank:
 
             # Get the retention ratio
-            ratio = rank_new / rank
+            ratio = rank_new / self.rank
 
             # Damp the evolution paths
-            rotated_path_cov *= ratio
-            rotated_path_sigma *= ratio
+            self._path_cov *= ratio
+            self._path_sigma *= ratio
 
         # Save the factor states
-        self._basis[:, :rank_new] = basis_new
-        self._core_vector = core_vector_new
+        self._basis[:] = basis_new
+        self._core[:] = core_new
         self._psi[:] = psi_new
         self.rank = rank_new
 
-        # Assign the rotated sigma and covariance evolution path
-        self._path_sigma[:rank_new] = rotated_path_sigma
-        self._path_cov[:rank_new] = rotated_path_cov
+        # Update the eigenvalues and -vectors of the core matrix
+        self._core_evals, self._core_evecs = eigh(self._core)
 
         # Update the dynamic variables
         self._update_dynamics()
@@ -683,29 +688,16 @@ class DLRCMAES:
             Indicator for expanding the rank.
         """
 
-        # Get the current rank
-        rank = self.rank
-
         # Initialize the number of positive and required votes
         votes = 0
         required = 2
 
-        # Compute the eigenvalues of the covariance matrix
-        cov_evals = self._core_vector + self._psi[:rank]
-
-        # Get the maximum eigenvalue
-        max_eval = nmax(cov_evals)
-
-        # Check if the current rank is smaller than the problem dimension
-        if rank < self._number_of_variables:
-
-            # Get the minimum eigenvalue by considering the full noise term
-            min_eval = minimum(nmin(cov_evals), nmin(self._psi[rank:]))
-
-        else:
-
-            # Get the minimum eigenvalue
-            min_eval = nmin(cov_evals)
+        # Get the maximum and minimum eigenvalue
+        max_eval, min_eval = _approx_spectrum_extremes(
+            self._basis,
+            self._core,
+            self._psi
+            )
 
         # Check if the condition number is greater than 1e6
         if max_eval / (min_eval + 1e-15) > 1e6:
@@ -783,25 +775,12 @@ class DLRCMAES:
 
             return True
 
-        # Get the current rank
-        rank = self.rank
-
-        # Compute the eigenvalues of the covariance matrix
-        cov_evals = self._core_vector + self._psi[:rank]
-
-        # Get the maximum eigenvalue
-        max_eval = nmax(cov_evals)
-
-        # Check if the current rank is smaller than the problem dimension
-        if rank < self._number_of_variables:
-
-            # Get the minimum eigenvalue by considering the full noise term
-            min_eval = minimum(nmin(cov_evals), nmin(self._psi[rank:]))
-
-        else:
-
-            # Get the minimum eigenvalue from the spectrum
-            min_eval = nmin(cov_evals)
+        # Get the maximum and minimum eigenvalue
+        max_eval, min_eval = _approx_spectrum_extremes(
+            self._basis,
+            self._core,
+            self._psi
+            )
 
         # Check if any eigenvalue is zero or the condition number explodes
         if min_eval <= 0 or (max_eval / (min_eval + 1e-15)) >= 1e14:
@@ -851,11 +830,12 @@ class DLRCMAES:
                 return True
 
         # Get the longest axis
-        root_cov = self._basis[:, :self.rank] * sqrt(self._core_vector)
+        safe_evals = maximum(self._core_evals, 1e-15)
+        root_cov = self._basis @ (self._core_evecs * sqrt(safe_evals))
         longest_axis = root_cov[:, argmax(norm(root_cov, axis=0))]
 
         # Check if the mean is not shifted along the longest axis
-        if all(self._mean == self._mean + 0.1 * self._sigma * longest_axis):
+        if nall(self._mean == (self._mean + 0.1 * self._sigma * longest_axis)):
 
             # Add the solver info
             self._result['solver_info'] = 'NO_EFFECT_AXIS'
@@ -866,21 +846,206 @@ class DLRCMAES:
 
 
 # Set the variable types
-f8_1d = types.float64[:]
 f8_2d = types.float64[:, :]
-f8 = types.float64
+f8_2d_f = types.float64[::1, :]
+f8_2d_c = types.float64[:, ::1]
+f8_1d = types.float64[:]
 i8_1d = types.int64[:]
+f8 = types.float64
 i8 = types.int64
 bo = types.bool_
 
 @njit(
-    types.Tuple((i8_1d, f8_1d, f8, f8_1d, f8_1d, f8))(
-        # Return: Tuple(elite_indices, path_sigma, sigma, mean, path_cov)
+    types.Tuple((f8, f8))(
+        # Return: Tuple(max_eval, min_eval)
+        f8_2d_f,        # basis
+        f8_2d_c,        # core
+        f8_1d,          # psi
+        ),
+    fastmath=True
+    )
+def _approx_spectrum_extremes(basis, core, psi):
+    """Approximate the covariance spectrum extremes."""
+
+    # Get the dimensionality
+    dim = basis.shape[0]
+
+    # Estimate the minimum eigenvalue from psi (Weyl's inequality)
+    min_eval = nmin(psi)
+
+    # Check if the value is very small
+    if min_eval < 1e-12:
+
+        # Set the value to 1e-12 to prevent numerical issues
+        min_eval = 1e-12
+
+    # Draw a random vector from the standard normal distribution
+    sample = normal(0.0, 1.0, size=dim)
+
+    # Get the sample norm
+    sample_norm = norm(sample)
+
+    # Check if the norm is positive
+    if sample_norm > 0:
+
+        # Normalize the vector
+        sample = sample / sample_norm
+
+    # Initialize the update vector
+    update_vec = zeros(dim, dtype=float64)
+
+    # Loop for a fixed number of power iterations
+    for _ in range(5):
+
+        # Compute the product C*x efficiently
+        update_vec = basis @ (core @ (basis.T @ sample)) + psi * sample
+
+        # Get the norm of the update vector
+        vec_norm = norm(update_vec)
+
+        # Check if the norm is very small
+        if vec_norm < 1e-12:
+
+            break
+
+        # Normalize the update vector
+        sample = update_vec / vec_norm
+
+    # Compute the Rayleigh quotient to get the maximum eigenvalue
+    max_eval = sample @ update_vec
+
+    return max_eval, min_eval
+
+
+@njit(
+    f8_1d(
+        # Return: approximation
+        f8_1d,          # elite_mean_step
+        f8_2d_f,        # basis
+        f8_2d_c,        # core
+        f8_1d,          # psi
+        ),
+    fastmath=True
+    )
+def _lanczos_inverse_square_root(elite_mean_step, basis, core, psi):
+    """Compute the inverse matrix square root-vector product C^(-1/2)*x."""
+
+    # Get the norm of the elite mean step
+    norm_step = norm(elite_mean_step)
+
+    # Check if the mean step is very small
+    if norm_step < 1e-15:
+
+        # Return zeros
+        return zeros(elite_mean_step.shape[0], dtype=float64)
+
+    # Get the shape of the basis matrix
+    dim, rank = basis.shape
+
+    # Determine the Krylov dimension
+    krylov_dim = min(dim, 3 * rank, 100)
+
+    # Initialize the coefficients and the Krylov subspace basis
+    alpha = zeros(krylov_dim, dtype=float64)
+    beta = zeros(krylov_dim, dtype=float64)
+    krylov_basis = zeros((krylov_dim, dim)).T
+
+    # Insert the first basis vector
+    krylov_basis[:, 0] = elite_mean_step / norm_step
+
+    # Track the current Krylov subspace dimensionality
+    current_dim = krylov_dim
+
+    # Loop over the dimensions of the Krylov subspace
+    for index in range(krylov_dim):
+
+        # Get the current basis vector
+        current_basis = krylov_basis[:, index]
+
+        # Generate the next Krylov vector
+        update_vec = (
+            basis @ (core @ (basis.T @ current_basis)) + psi * current_basis
+            )
+
+        # Loop until the current dimension of the Krylov subspace
+        for sub in range(index + 1):
+
+            # Get the i-th Krylov basis vector
+            sub_basis = krylov_basis[:, sub]
+
+            # Project the next vector onto the i-th Krylov basis
+            projection = sub_basis.T @ update_vec
+
+            # Check if the penultimate dimension has been reached
+            if sub == index:
+
+                # Store the alpha coefficient
+                alpha[index] = projection
+
+            # "Clean" the update vector by the projection
+            update_vec = update_vec - projection * sub_basis
+
+        # Check if the final dimension has not been reached
+        if index < krylov_dim - 1:
+
+            # Get the beta value by the update vector norm
+            beta_next = norm(update_vec)
+
+            # Insert the value at the next index of the beta vector
+            beta[index + 1] = beta_next
+
+            # Check for "happy breakdown" (exact solution found)
+            if beta_next < 1e-12:
+
+                # Set the current dimensionality to the final index
+                current_dim = index + 1
+
+                break
+
+            # Store the new Krylov basis vector
+            krylov_basis[:, index + 1] = update_vec / beta_next
+
+    # Initialize the tridiagonal projection matrix by the alpha values
+    tridiagonal = diag(alpha[:current_dim])
+
+    # Check if the current Krylov dimension is larger than one
+    if current_dim > 1:
+
+        # Fill the subdiagonals of the projection matrix
+        tridiagonal += (
+            diag(beta[1:current_dim], k=1) + diag(beta[1:current_dim], k=-1)
+            )
+
+    # Perform an eigendecomposition on the projection matrix
+    tridiagonal_evals, tridiagonal_evecs = eigh(tridiagonal)
+
+    # Safeguard against small eigenvalues
+    tridiagonal_evals = maximum(tridiagonal_evals, 1e-15)
+
+    # Calculate the inner vector (T^(-1/2) * e_1||x||)
+    inv_sqrt_evals = 1.0 / sqrt(tridiagonal_evals)
+    inner_vector = (
+        tridiagonal_evecs @ (
+            inv_sqrt_evals * (tridiagonal_evecs[0, :] * norm_step))
+        )
+
+    # Get the approximated inverse matrix square root-vector product
+    krylov_slice = asfortranarray(krylov_basis[:, :current_dim])
+    approximation = krylov_slice @ inner_vector
+
+    return approximation
+
+
+@njit(
+    types.Tuple((f8_1d, f8, f8_1d, f8_1d, f8))(
+        # Return: Tuple(path_sigma, sigma, mean, path_cov, update_switch)
         f8_1d,          # fitness
         f8_2d,          # steps
         f8_2d,          # weights
-        f8_2d,          # basis
-        f8_1d,          # evals
+        f8_2d_f,        # basis
+        f8_1d,          # core_evals
+        f8_2d,          # core_evecs
+        f8_1d,          # psi
         f8_1d,          # path_sigma
         f8_1d,          # path_cov
         f8_1d,          # mean
@@ -897,9 +1062,9 @@ bo = types.bool_
     fastmath=True
     )
 def _tell(
-    fitness, steps, weights, basis, core_vector, path_sigma, path_cov, mean,
-    sigma, lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma, expected_path_length,
-    opt_iter, elite_size):
+    fitness, steps, weights, basis, core_evals, core_evecs, psi, path_sigma,
+    path_cov, mean, sigma, lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma,
+    expected_path_length, opt_iter, elite_size):
     """Update the state variables."""
 
     # Get the elite indices
@@ -912,17 +1077,15 @@ def _tell(
         steps[elite_indices] * elite_weights, axis=0
         )
 
-    # Calculate the inverse rooted eigenvalues
-    inv_root_core_vec = 1.0 / (sqrt(core_vector) + 1e-15)
-
-    # Transform the elite mean step
-    latent_step = basis.T @ elite_mean_step
-    elite_mean_step_tr = inv_root_core_vec * latent_step
+    # Reconstruct the core matrix
+    core_evecs_transposed = ascontiguousarray(core_evecs.T)
+    core = (core_evecs * core_evals) @ core_evecs_transposed
 
     # Update the step size evolution path
     path_sigma *= (1.0 - lr_sigma)
     path_sigma += (
-        sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff) * elite_mean_step_tr
+        sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff)
+        * _lanczos_inverse_square_root(elite_mean_step, basis, core, psi)
         )
 
     # Get the norm of the step size evolution path
@@ -957,16 +1120,18 @@ def _tell(
     coeff = update_switch * sqrt(lr_cov * (2.0 - lr_cov) * mu_eff)
 
     # Update the covariance evolution path with the elite mean step
-    path_cov += coeff * latent_step
+    path_cov += coeff * elite_mean_step
 
-    return elite_indices, path_sigma, sigma, mean, path_cov, update_switch
+    return path_sigma, sigma, mean, path_cov, update_switch
 
 
 # @njit(
 #     types.Tuple((f8_2d, f8_1d, f8_1d, i8))(
-#         # Return: Tuple(basis_new, ev_new, psi_new, rank_new)
+#         # Return: Tuple(basis_new, core_new, psi_new, rank_new)
 #         f8_2d,          # basis
-#         f8_1d,          # core_vector
+#         f8_1d,          # core
+#         f8_1d,          # core_evals
+#         f8_2d,          # core_evecs
 #         f8_1d,          # psi
 #         f8_2d,          # elite_steps
 #         f8_2d,          # weights
@@ -980,156 +1145,151 @@ def _tell(
 #     fastmath=True
 #     )
 def _spd_bug_step(
-        basis, core_vector, psi, elite_steps, weights, path_cov, lr_cov,
-        lr_rank_one, lr_rank_mu, update_switch, force_expansion):
-    """Perform the SPD-BUG step with adaptive rank truncation."""
+    basis, core, core_evals, core_evecs, psi, steps_sorted, weights, path_cov,
+    lr_cov, lr_rank_one, lr_rank_mu, update_switch, force_expansion):
+    """Perform an update step of the SPD-BUG integrator."""
 
-    from numpy import hstack, isfinite, newaxis, nan_to_num, sign
-    from numpy.linalg import LinAlgError
-
+    # Get the dimension and rank
     dim, rank = basis.shape
-    max_rank = min(2 * rank, dim)
 
-    # 0. Berechne den angepassten Term genau wie im klassischen CMA-ES
-    lr_rank_one_adj = (1.0 - update_switch) * lr_rank_one * lr_cov * (2.0 - lr_cov)
+    # Determine the maximum rank and the augmentation size
+    max_rank = min(2 * rank, dim) if force_expansion else rank
+    aug_size = max_rank - rank
 
-    # Fortlaufenden Speicher garantieren
-    B = ascontiguousarray(basis)
+    # Copy and flatten the weights
+    weights_sorted = weights.copy().flatten()
 
-    # 1. Prüfen, ob die Richtung 'psi' den Unterraum erweitern kann
-    projection_weights = B.T @ psi
-    psi_orthogonal = psi - B @ projection_weights
-    psi_norm = norm(psi_orthogonal)
+    def evaluate_velocity_field(matrix, input_basis, decay_rate):
+        """Evaluate the velocity field F."""
 
-    # CMA-ES Dämpfung auf das alte Kernsystem anwenden
-    c_decay = 1.0 - lr_rank_one - lr_rank_mu + lr_rank_one_adj
+        # Check if the input basis matches the core dimensions
+        if input_basis.shape[1] == core.shape[0]:
 
-    if psi_norm > 1e-10 and rank < max_rank:
-        # Basis temporär um die neue orthogonale Richtung erweitern
-        psi_new_dir = psi_orthogonal / psi_norm
-        B_augmented = hstack([B, psi_new_dir[:, newaxis]])
+            # Construct the local K-slice by the original formula
+            k_slice_local = input_basis @ core + psi[:, None] * input_basis
 
-        # Altes Kernsystem gedämpft einbetten (Größe: rank + 1)
-        K_expanded = zeros((rank + 1, rank + 1))
-        K_expanded[:rank, :rank] = diag(core_vector * c_decay)
+        else:
 
-        # WEGWEISENDE KORREKTUR: path_cov lebt im Unterraum (Größe rank).
-        # Da wir die Basis um 1 erweitert haben, hängen wir eine 0 an den Pfad an.
-        y_path = zeros(rank + 1)
-        y_path[:rank] = path_cov
+            # Use a fallback to calculate the local K-slice
+            k_slice_local = matrix + psi[:, None] * input_basis
 
-    else:
-        # Keine Erweiterung, Update im bestehenden Unterraum
-        B_augmented = B
-        K_expanded = diag(core_vector * c_decay)
-        # Keine Erweiterung der Basis -> y_path entspricht exakt dem aktuellen path_cov
-        y_path = path_cov
+        # Transform the steps
+        steps_tr = steps_sorted @ input_basis
 
-    # 2. Projektion der hochdimensionalen CMA-ES Update-Terme in den BUG-Unterraum
-    # Rank-One Term: Evolutionspfad projizieren
-    K_rank_one = lr_rank_one * outer(y_path, y_path)
+        # Compute the rank-mu update term
+        rank_mu_term_u = steps_sorted.T @ (weights_sorted[:, None] * steps_tr)
 
-    # Rank-Mu Term: Projiziere alle Schritte (Form: rank_augmented x pop_size, hier: 1000 x 12)
-    Y_steps = B_augmented.T @ elite_steps.T
+        # Compute the rank-one update term
+        path_cov_tr = input_basis.T @ path_cov
+        rank_one_term_u = outer(path_cov, path_cov_tr)
 
-    # Wie viele Individuen (Spalten) haben wir in dieser Iteration tatsächlich?
-    pop_size_current = Y_steps.shape[1]
+        # Assemble the local velocity field
+        f_local = (
+            decay_rate * k_slice_local
+            + lr_rank_one * rank_one_term_u
+            + lr_rank_mu * rank_mu_term_u
+            )
 
-    # Wir schneiden die Gewichte exakt auf die Anzahl der aktuellen Individuen zu
-    # und richten sie als Zeilenvektor (1, pop_size) aus
-    w_sliced = weights
+        return f_local
 
-    # Hocheffizientes spaltenweises Skalieren via Broadcasting:
-    # Jedes Individuum (Spalte) bekommt sein passendes CMA-ES Gewicht.
-    K_rank_mu = lr_rank_mu * ((Y_steps @ w_sliced) @ Y_steps.T)
+    # Transform the steps
+    steps_sorted_tr = steps_sorted @ basis
 
-    # 3. Das kombinierte BUG-Kernsystem aufstellen
-    K_total = K_expanded + K_rank_one + K_rank_mu
+    # Get the indices for the negative weights
+    neg_indices = where(weights_sorted < 0.0)[0]
 
-    # Numerischer Schutz gegen NaN/Inf (falls sigma kollabiert)
-    if not isfinite(K_total).all():
-        K_total = nan_to_num(K_total, nan=0.0, posinf=0.0, neginf=0.0)
+    # Check if any negative weights are present
+    if len(neg_indices) > 0:
 
-    # Perfekte Symmetrie erzwingen
-    K_total = 0.5 * (K_total + K_total.T)
+        # Get the inverse square root of the core matrix
+        safe_evals = maximum(1e-14, core_evals)
+        inv_sqrt_core = (core_evecs * (1.0 / sqrt(safe_evals))) @ core_evecs.T
 
-    # 4. Eigenwertzerlegung des kleinen Kernsystems (viel stabiler als SVD bei CMA-ES)
-    try:
-        S_new, U_core = eigh(K_total)
+        # Perform an isotropic transformation
+        steps_neg_iso = steps_sorted_tr[neg_indices] @ inv_sqrt_core
 
-        # Absteigend nach der Größe der Eigenwerte sortieren
-        idx = argsort(S_new)[::-1]
-        S_new = S_new[idx]
-        U_core = U_core[:, idx]
+        # Get the squared norms of the isotropic vectors
+        squared_z_norms = nsum(steps_neg_iso**2, axis=1)
 
-        # Negative Eigenwerte durch numerisches Rauschen abschneiden
-        S_new = clip(S_new, a_min=0.0, a_max=None)
+        # Get the scaling factors
+        factors = dim / (squared_z_norms + 1e-15)
 
-    except LinAlgError:
-        # Fallback bei numerischem Totalausfall
-        dim_k = K_total.shape[0]
-        S_new = ones(dim_k) * 1e-15
-        S_new[:len(core_vector)] = core_vector
-        U_core = eye(dim_k)
+        # Rescale the weights to guarantee positive definiteness
+        weights_sorted[neg_indices] *= minimum(1.0, factors)
 
-    # 5. Adaptives Abschneiden (Truncation)
-    # =========================================================================
-    if force_expansion:
-        target_rank = min(max_rank, len(S_new))
-        truncated_energy = 0.0
-    else:
-        energy_threshold = 1e-7 * S_new[0] if len(S_new) > 0 else 1e-7
-        keep_mask = S_new > energy_threshold
-        target_rank = nsum(keep_mask)
+    # Get the adjusted rank-1 learning rate
+    lr_rank_one_adj = (
+        (1.0 - update_switch) * lr_rank_one * lr_cov * (2.0 - lr_cov)
+        )
 
-        # WICHTIG: Berechne die Energie der weggeschnittenen Richtungen!
-        # Diese Varianzen dürfen nicht verpuffen, sondern müssen zurück zu Psi fließen.
-        truncated_energy = nsum(S_new[~keep_mask]) if nsum(~keep_mask) > 0 else 0.0
+    # Get the decay rate
+    lr_decay = 1.0 - lr_rank_one - lr_rank_mu + lr_rank_one_adj
 
-        # Auf der Sphere darf der Rang ruhig klein werden (z. B. mindestens 2 oder 3)
-        target_rank = max(2, min(target_rank, max_rank))
+    # Calculate the initial K-slice
+    k_slice_init = basis @ core + psi[:, None] * basis
 
-    # =========================================================================
-    # 6. Rückprojektion & Relativer Floor
-    # =========================================================================
-    new_basis = B_augmented @ U_core[:, :target_rank]
+    # Build the projection basis
+    identity = eye(dim)
+    u_proj = identity - basis @ basis.T
+    u_proj_had = u_proj * u_proj
+    u_proj_had_pinv = pinv(u_proj_had, rcond=1e-12)
 
-    max_ev = S_new[0]
-    relative_floor = max_ev * 1e-7
-    absolute_floor = 1e-15
-    floor_value = max(relative_floor, absolute_floor)
+    # Compute the velocity field for the diagonal part
+    y_mat = k_slice_init @ basis.T
+    vel_field = evaluate_velocity_field(y_mat, identity, lr_decay)
+    f_diff = vel_field - y_mat
 
-    new_core = clip(S_new[:target_rank], a_min=floor_value, a_max=None)
-    new_rank = len(new_core)
+    # Update psi
+    d_psi = u_proj_had_pinv @ diag(u_proj @ f_diff @ u_proj)
+    psi_new = maximum(1e-10, psi + d_psi)
 
-    # =========================================================================
-    # 7. Numerische Nachreinigung (QR)
-    # =========================================================================
-    new_basis, R = qr(new_basis, mode='reduced')
-    new_basis = new_basis * sign(diag(R))
+    # Update the local K-slice and apply the diagonal correction
+    k_slice = evaluate_velocity_field(k_slice_init, basis, lr_decay)
+    k_slice -= d_psi[:, None] * basis
 
-    # =========================================================================
-    # 8. Dynamisches Psi-Update mit Energie-Rückfluss
-    # =========================================================================
-    # Das alte Psi dämpfen (CMA-ES Dämpfung), genau wie das Kernsystem!
-    psi_decayed = psi * c_decay
+    # Augment the K-slice with the previous basis
+    k_aug = zeros((dim, max_rank))
+    k_aug[:, :rank] = k_slice
+    if aug_size > 0:
+        q_orth, _ = qr(u_proj)
+        k_aug[:, rank:max_rank] = q_orth[:, :aug_size]
 
-    # Der orthogonale Anteil des aktuellen Schritts (Residuum)
-    new_psi_projection = new_basis @ (new_basis.T @ psi_decayed)
-    residual_psi = psi_decayed - new_psi_projection
+    # Compute a new augmented basis via QR
+    uhat_aug, _ = qr(k_aug)
 
-    # ENERGIE-ERHALTUNG: Wir fügen die weggeschnittene Varianz (verteilt auf die
-    # verbleibenden unstrukturierten Dimensionen) als isotropen Anteil hinzu.
-    unstructured_dims = dim - target_rank
-    if unstructured_dims > 0:
-        isotropic_injection = truncated_energy / unstructured_dims
-        new_psi = residual_psi + isotropic_injection
-    else:
-        new_psi = residual_psi
+    # Project the old basis into the augmented space
+    m_proj = uhat_aug.T @ basis
+    ext_s = m_proj @ core @ m_proj.T
 
-    # Relativer Bodenschutz auch für Psi, damit es proportional zu S_new mitschrumpft,
-    # anstatt auf einem harten 1e-3 einzufrieren!
-    psi_floor = max_ev * 1e-7
-    new_psi = clip(new_psi, a_min=max(psi_floor, 1e-15), a_max=None)
+    # Perform the rank-mu and rank-one updates in the augmented space
+    steps_aug_tr = steps_sorted @ uhat_aug
+    rank_mu_term_s = steps_aug_tr.T @ (weights_sorted[:, None] * steps_aug_tr)
 
-    return new_basis, new_core, new_psi, new_rank
+    path_cov_aug = uhat_aug.T @ path_cov
+    rank_one_term_s = outer(path_cov_aug, path_cov_aug)
+
+    # Compute the velocity field for the core
+    f_core = (
+        lr_decay * ext_s
+        + lr_rank_one * rank_one_term_s
+        + lr_rank_mu * rank_mu_term_s
+        )
+
+    # Apply the matrix flow to the core and subtract the diagonal part
+    psi_diff_s = uhat_aug.T @ (d_psi[:, None] * uhat_aug)
+    shat = ext_s + f_core - psi_diff_s
+
+    # Enforce symmetry
+    shat = 0.5 * (shat + shat.T)
+
+    # Perform SVD to the augmented core matrix
+    left, sigma, _ = svd(shat)
+    max_sig = sigma[0]
+    sigma_safe = maximum(sigma, max_sig / 1e12)
+    sigma_safe = maximum(1e-12, sigma_safe)
+
+    # Truncate back to the original rank
+    basis_new = uhat_aug @ left[:, :rank]
+    core_new = diag(sigma_safe[:rank])
+
+    return basis_new, core_new, psi_new, rank

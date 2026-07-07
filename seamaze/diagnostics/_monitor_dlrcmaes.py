@@ -5,7 +5,7 @@
 # %% External package import
 
 from numpy import mean, ndarray
-from numpy.linalg import norm
+from numpy.linalg import eigvalsh, norm
 
 # %% Internal package import
 
@@ -178,14 +178,18 @@ class MonitorDLRCMAES:
             fitness = solver._fitness
             optimal_value = solver._result['optimal_value'].item()
 
-            # Reproduce the covariance matrix and singular values
+            # Reproduce the covariance matrix
             self._cov = (
-                (solver._basis[:2, :solver.rank]
-                * solver._core_vector[:solver.rank])
-                @ solver._basis[:2, :solver.rank].T)
+                solver._basis[:2] @ solver._core @ solver._basis[:2].T
+                )
             self._cov[0, 0] += solver._psi[0]
             self._cov[1, 1] += solver._psi[1]
-            self._svs = solver._core_vector
+
+            # Reconstruct the singular values
+            psi_projected = (solver._basis.T * solver._psi) @ solver._basis
+            reduced_matrix = solver._core + psi_projected
+            dominant_svs = eigvalsh(reduced_matrix)
+            self._svs = dominant_svs[::-1]
 
             # Check if the interactive plot should be updated
             if self.visualizer:

@@ -10,9 +10,8 @@ from collections import deque
 from math import inf
 from numba import njit, types
 from numpy import (
-    add, arange, argmax, argmin, argsort, array, asfortranarray, clip, exp,
-    eye, float64, full, isinf, log, maximum, minimum, ones, outer, ptp, sqrt,
-    where, zeros)
+    add, arange, argmax, argmin, argsort, array, clip, exp, eye, float64, full,
+    isinf, log, maximum, minimum, ones, outer, ptp, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import any as nany
 from numpy import max as nmax
@@ -256,12 +255,10 @@ class CMAES:
         self._sigma = initial_sigma
 
         self._steps = zeros(
-            (self._pop_size, self._number_of_variables), order='F',
-            dtype=float64
+            (self._pop_size, self._number_of_variables), dtype=float64
             )
         self._population = zeros(
-            (self._pop_size, self._number_of_variables), order='F',
-            dtype=float64
+            (self._pop_size, self._number_of_variables), dtype=float64
             )
 
         self._path_sigma = zeros(self._number_of_variables, dtype=float64)
@@ -270,12 +267,12 @@ class CMAES:
 
         self._cov = eye(self._number_of_variables, dtype=float64)
         self._root_cov = eye(
-            self._number_of_variables, order='F', dtype=float64
+            self._number_of_variables, dtype=float64
             )
         self._basis = eye(
             self._number_of_variables, order='F', dtype=float64
             )
-        self._core_vector = ones(self._number_of_variables, dtype=float64)
+        self._core = ones(self._number_of_variables, dtype=float64)
 
         # Initialize the stopping criteria and tracking variables
         self.maximum_iterations = maximum_iterations
@@ -350,12 +347,12 @@ class CMAES:
                 )
 
             # Mirror the violating individuals back into the feasible region
-            self._population = where(
+            self._population[:] = where(
                 self._population < self.lower_variable_bounds,
                 self.lower_variable_bounds + eps_lower,
                 self._population
                 )
-            self._population = where(
+            self._population[:] = where(
                 self._population > self.upper_variable_bounds,
                 self.upper_variable_bounds - eps_upper,
                 self._population
@@ -460,7 +457,7 @@ class CMAES:
             self._steps,
             self._weights,
             self._basis,
-            self._core_vector,
+            self._core,
             self._path_sigma,
             self._path_cov,
             self._mean,
@@ -479,34 +476,34 @@ class CMAES:
             )
 
         # Save the state variables
-        self._path_sigma = path_sigma_new
-        self._mean = mean_new
+        self._path_sigma[:] = path_sigma_new
+        self._mean[:] = mean_new
         self._sigma = sigma_new
-        self._path_cov = path_cov_new
-        self._cov = cov_new
+        self._path_cov[:] = path_cov_new
+        self._cov[:] = cov_new
 
         # Check if the low-rank factors should be updated
         if self._opt_iter % self._update_interval == 0:
 
             # Update the low-rank factors via eigendecomposition
-            self._core_vector, self._basis = eigh(
+            self._core[:], self._basis[:] = eigh(
                 self._cov, overwrite_a=False, check_finite=False
                 )
 
             # Sort the singular values and vectors in descending order
-            self._core_vector = self._core_vector[::-1]
-            self._basis = asfortranarray(self._basis[:, ::-1])
+            self._core[:] = self._core[::-1]
+            self._basis[:] = self._basis[:, ::-1]
 
             # Clip the singular values
-            maximum(self._core_vector, 1e-12, out=self._core_vector)
+            maximum(self._core, 1e-12, out=self._core)
 
             # Update the sampling matrix
-            sqrt_core = sqrt(self._core_vector)
-            self._root_cov = asfortranarray(self._basis * sqrt_core)
+            sqrt_core = sqrt(self._core)
+            self._root_cov[:] = self._basis * sqrt_core
 
             # Reconstruct the covariance matrix
-            self._cov = (
-                (self._basis * self._core_vector) @ self._basis.T
+            self._cov[:] = (
+                (self._basis * self._core) @ self._basis.T
                 )
 
     def optimize(
@@ -640,8 +637,8 @@ class CMAES:
             return True
 
         # Get the maximum and minimum eigenvalue
-        max_eval = nmax(self._core_vector)
-        min_eval = nmin(self._core_vector)
+        max_eval = nmax(self._core)
+        min_eval = nmin(self._core)
 
         # Check if any eigenvalue is zero or the condition number explodes
         if min_eval <= 0 or (max_eval / (min_eval + 1e-15)) >= 1e14:
@@ -705,10 +702,9 @@ class CMAES:
 
 
 # Set the variable types
-f8_1d = types.float64[:]
-f8_1d_c = types.float64[::1]
 f8_2d = types.float64[:, :]
 f8_2d_f = types.float64[::1, :]
+f8_1d = types.float64[:]
 f8 = types.float64
 i8 = types.int64
 
@@ -719,7 +715,7 @@ i8 = types.int64
         f8_2d,          # steps
         f8_2d,          # weights
         f8_2d_f,        # basis
-        f8_1d,          # core_vector
+        f8_1d,          # _core
         f8_1d,          # path_sigma
         f8_1d,          # path_cov
         f8_1d,          # mean
@@ -739,8 +735,8 @@ i8 = types.int64
     fastmath=True
     )
 def _tell(
-    fitness, steps, weights, basis, core_vector, path_sigma, path_cov, mean,
-    sigma, cov, lr_sigma, lr_cov, lr_mean, lr_rank_one, lr_rank_mu, mu_eff,
+    fitness, steps, weights, basis, core, path_sigma, path_cov, mean, sigma,
+    cov, lr_sigma, lr_cov, lr_mean, lr_rank_one, lr_rank_mu, mu_eff,
     damp_sigma, expected_path_length, opt_iter, elite_size):
     """Update the state variables."""
 
@@ -758,11 +754,11 @@ def _tell(
         )
 
     # Calculate the inverse rooted eigenvalues
-    inv_root_core_vec = 1.0 / (sqrt(core_vector) + 1e-15)
+    inv_root_core = 1.0 / (sqrt(core) + 1e-15)
 
     # Transform the elite mean step
     latent_step = basis.T @ elite_mean_step
-    elite_mean_step_tr = inv_root_core_vec * latent_step
+    elite_mean_step_tr = inv_root_core * latent_step
 
     # Update the step size evolution path
     path_sigma *= (1.0 - lr_sigma)
@@ -821,7 +817,7 @@ def _tell(
         steps_neg = steps_sorted[neg_indices]
 
         # Perform an isotropic transformation
-        steps_neg_tr = (basis.T @ steps_neg.T).T * inv_root_core_vec
+        steps_neg_tr = (basis.T @ steps_neg.T).T * inv_root_core
 
         # Get the squared norms of the isotropic vectors
         squared_z_norms = nsum(steps_neg_tr**2, axis=1)
@@ -830,7 +826,7 @@ def _tell(
         factors = dim / (squared_z_norms + 1e-15)
 
         # Rescale the weights to guarantee positive definiteness
-        weights_sorted[neg_indices] *= minimum(1.0, factors)
+        weights_sorted[neg_indices] *= minimum(1.0, factors)[:, None]
 
     # Compute the rank-mu term for the covariance
     rank_mu_term = (

@@ -238,24 +238,20 @@ class LMMAES:
         self._sigma = initial_sigma
 
         self._zsamples = zeros(
-            (self._pop_size, self._number_of_variables),
-            order='F', dtype=float64
+            (self._pop_size, self._number_of_variables), dtype=float64
             )
         self._steps = zeros(
-            (self._pop_size, self._number_of_variables),
-            order='C', dtype=float64
+            (self._pop_size, self._number_of_variables), dtype=float64
             )
         self._population = zeros(
-            (self._pop_size, self._number_of_variables),
-            order='F', dtype=float64
+            (self._pop_size, self._number_of_variables), dtype=float64
             )
 
         self._path_sigma = zeros(self._number_of_variables, dtype=float64)
         self._mean = zeros(self._number_of_variables, dtype=float64)
 
         self._memory = zeros(
-            (self._memory_size, self._number_of_variables),
-            order='C', dtype=float64
+            (self._memory_size, self._number_of_variables), dtype=float64
             )
 
         # Initialize the stopping criteria and tracking variables
@@ -309,12 +305,13 @@ class LMMAES:
                 natural_gradient, self._memory, self._lr_cov, num_iter
                 )
 
-            # Rescale the natural gradient
+            # Compute the rescaling factor
             rescale = 1.0 / sqrt(gradient @ natural_gradient + 1e-15)
-            gradient_step = natural_gradient * rescale
-            gradient_step /= (self._sigma + 1e-15)
 
-            # Add the mirrored gradient steps to the population steps
+            # Compute the natural gradient step
+            gradient_step = natural_gradient * rescale
+
+            # Add the mirrored gradient steps
             self._steps[-2] = -gradient_step
             self._steps[-1] = gradient_step
 
@@ -338,12 +335,12 @@ class LMMAES:
                 )
 
             # Mirror the violating individuals back into the feasible region
-            self._population = where(
+            self._population[:] = where(
                 self._population < self.lower_variable_bounds,
                 self.lower_variable_bounds + eps_lower,
                 self._population
                 )
-            self._population = where(
+            self._population[:] = where(
                 self._population > self.upper_variable_bounds,
                 self.upper_variable_bounds - eps_upper,
                 self._population
@@ -463,10 +460,10 @@ class LMMAES:
             )
 
         # Save the state variables
-        self._path_sigma = path_sigma_new
-        self._mean = mean_new
+        self._path_sigma[:] = path_sigma_new
+        self._mean[:] = mean_new
         self._sigma = sigma_new
-        self._memory = memory_new
+        self._memory[:] = memory_new
 
     def optimize(
             self,
@@ -677,10 +674,10 @@ class LMMAES:
 
 
 # Set the variable types
-f8_1d = types.float64[:]
-f8_1d_c = types.float64[::1]
 f8_2d = types.float64[:, :]
 f8_2d_c = types.float64[:, ::1]
+f8_1d = types.float64[:]
+f8_1d_c = types.float64[::1]
 f8 = types.float64
 i8 = types.int64
 

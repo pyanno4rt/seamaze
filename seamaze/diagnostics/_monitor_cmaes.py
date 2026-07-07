@@ -184,7 +184,7 @@ class MonitorCMAES:
                     population=solver._population,
                     mean=solver._mean,
                     cov=solver._cov,
-                    svs=solver._core_vector,
+                    svs=solver._core,
                     sigma=solver._sigma,
                     fitness=fitness,
                     squared_bound_errors=errors,
@@ -241,7 +241,7 @@ class MonitorCMAES:
             self._last_mean = mean_vec.copy()
 
             # Record the singular values
-            svs = solver._core_vector
+            svs = solver._core
             self._record('cov_svs', svs)
 
             # Record the covariance metrics

@@ -33,7 +33,7 @@ include = "seamaze"
 python = ">=3.11, <4.0"
 numpy = ">=2.4.6"
 scipy = ">=1.17.1"
-numba = ">=0.65.1"
+numba = ">=0.66.0"
 matplotlib = ">=3.11.0"
 seaborn = ">=0.13.2"
 
@@ -43,7 +43,7 @@ pytest-cov = ">=7.1.0"
 coveralls = ">=4.1.0"
 
 [tool.poetry.group.dev-local.dependencies]
-spyder = ">=6.1.4"
+spyder = ">=6.1.5"
 
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/pyanno4rt/seamaze/issues"
