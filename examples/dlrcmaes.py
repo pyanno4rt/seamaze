@@ -43,7 +43,7 @@ Available benchmark functions are:
 name = 'Sphere'
 
 # Enter the problem dimensionality
-ndim = 10
+ndim = 80
 
 # Get the benchmark function class
 problems = {

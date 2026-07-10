@@ -328,8 +328,11 @@ class DLRCMAES:
             )
         self._core = (alpha * init_var) * ones(self.rank, dtype=float64)
 
-        self._psi = init_var * ones(self._number_of_variables, dtype=float64)
-        self._psi[:self.rank] *= (1.0 - alpha)
+        # Allocate any variance not captured by the low-rank basis to psi directly
+        low_rank_diag = diag(self._basis @ self._core @ self._basis.T)
+        self._psi = maximum(
+            0.0, init_var - low_rank_diag
+            ).astype(float64)
 
         # Initialize the stopping criteria and tracking variables
         self.maximum_iterations = maximum_iterations
