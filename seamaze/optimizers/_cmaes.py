@@ -807,7 +807,7 @@ def _tell(
     neg_indices = where(weights_sorted < 0.0)[0]
 
     # Check if any negative weights are present
-    if len(neg_indices) > 0:
+    if neg_indices.size > 0:
 
         # Extract negative steps into a contiguous block
         steps_neg = steps_sorted[neg_indices]

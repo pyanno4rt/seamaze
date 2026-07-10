@@ -1087,25 +1087,25 @@ def _tell(
     return path_sigma, sigma, mean, path_cov, update_switch
 
 
-# @njit(
-#     types.Tuple((f8_2d, f8_1d, f8_1d, i8))(
-#         # Return: Tuple(basis_new, core_new, psi_new, rank_new)
-#         f8_2d,          # basis
-#         f8_1d,          # core
-#         f8_1d,          # core_evals
-#         f8_2d,          # core_evecs
-#         f8_1d,          # psi
-#         f8_2d,          # elite_steps
-#         f8_2d,          # weights
-#         f8_1d,          # path_cov
-#         f8,             # lr_cov
-#         f8,             # lr_rank_one
-#         f8,             # lr_rank_mu
-#         f8,             # update_switch
-#         bo              # force_expansion
-#         ),
-#     fastmath=True
-#     )
+@njit(
+    types.Tuple((f8_2d, f8_2d, f8_1d, i8))(
+        # Return: Tuple(basis_new, core_new, psi_new, rank_new)
+        f8_2d,          # basis
+        f8_2d,          # core
+        f8_1d,          # core_evals
+        f8_2d,          # core_evecs
+        f8_1d,          # psi
+        f8_2d,          # elite_steps
+        f8_2d,          # weights
+        f8_1d,          # path_cov
+        f8,             # lr_cov
+        f8,             # lr_rank_one
+        f8,             # lr_rank_mu
+        f8,             # update_switch
+        bo              # force_expansion
+        ),
+    fastmath=True
+    )
 def _adaptive_bug_step(
     basis, core, core_evals, core_evecs, psi, steps_sorted, weights, path_cov,
     lr_cov, lr_rank_one, lr_rank_mu, update_switch, force_expansion):
@@ -1114,45 +1114,17 @@ def _adaptive_bug_step(
     # Get the dimension and rank
     dim, rank = basis.shape
 
+    # Get the transposed basis and the basis-core product
+    basis_T = basis.T
+    basis_core = basis @ core
+
     # Determine the maximum rank and the augmentation size
     max_rank = min(2 * rank, dim)
     aug_size = max_rank - rank
 
     # Copy and flatten the weights
-    weights_sorted = weights.copy().flatten()
-
-    def evaluate_velocity_field(matrix, input_basis, decay_rate):
-        """Evaluate the velocity field F."""
-
-        # Check if the input basis matches the core dimensions
-        if input_basis.shape[0] == core.shape[0]:
-
-            # Construct the local K-slice by the original formula
-            k_slice_local = input_basis @ core + psi[:, None] * input_basis
-
-        else:
-
-            # Use a fallback to calculate the local K-slice
-            k_slice_local = matrix
-
-        # Transform the steps
-        steps_tr = steps_sorted @ input_basis
-
-        # Compute the rank-mu update term
-        rank_mu_term_u = steps_sorted.T @ (weights_sorted[:, None] * steps_tr)
-
-        # Compute the rank-one update term
-        path_cov_tr = input_basis.T @ path_cov
-        rank_one_term_u = outer(path_cov, path_cov_tr)
-
-        # Assemble the local velocity field
-        f_local = (
-            + lr_rank_one * rank_one_term_u
-            + lr_rank_mu * rank_mu_term_u
-            - decay_rate * k_slice_local
-            )
-
-        return f_local
+    weights_sorted = weights.ravel().copy()
+    weights_sorted_2d = weights_sorted.reshape((-1, 1))
 
     # Transform the steps
     steps_sorted_tr = steps_sorted @ basis
@@ -1161,7 +1133,7 @@ def _adaptive_bug_step(
     neg_indices = where(weights_sorted < 0.0)[0]
 
     # Check if any negative weights are present
-    if len(neg_indices) > 0:
+    if neg_indices.size > 0:
 
         # Get the inverse square root of the core matrix
         safe_evals = maximum(1e-14, core_evals)
@@ -1187,18 +1159,14 @@ def _adaptive_bug_step(
     # Get the decay rate
     lr_decay = lr_rank_one + lr_rank_mu - lr_rank_one_adj
 
-    # Get the rank-one and rank-mu terms
-    rank_mu_term = steps_sorted.T @ (weights_sorted[:, None] * steps_sorted)
-    rank_one_term = outer(path_cov, path_cov)
-
     # Get the diagonal update variance
     growth_var = (
-        lr_rank_one * diag(rank_one_term)
-        + lr_rank_mu * diag(rank_mu_term)
+        lr_rank_one * (path_cov * path_cov)
+        + lr_rank_mu * nsum(weights_sorted_2d * steps_sorted**2, axis=0)
         )
 
     # Get the variance of the low-rank component
-    low_rank_diag = diag(basis @ core @ basis.T)
+    low_rank_diag = nsum((basis_core) * basis, axis=1)
 
     # Get the delta psi from the unaccounted variance
     delta_psi_raw = growth_var - (low_rank_diag + psi)
@@ -1208,9 +1176,23 @@ def _adaptive_bug_step(
     d_psi = psi_new - psi
 
     # Update the local K-slice and apply the diagonal correction
-    k_slice_init = basis @ core + psi[:, None] * basis
-    k_slice = evaluate_velocity_field(k_slice_init, basis, lr_decay)
-    k_slice += k_slice_init
+    k_slice_init = basis_core + psi[:, None] * basis
+
+    # Compute the rank-mu update term
+    rank_mu_term_u = (
+        steps_sorted.T @ (weights_sorted_2d * steps_sorted_tr)
+        )
+
+    # Compute the rank-one update term
+    path_cov_tr = basis_T @ path_cov
+    rank_one_term_u = outer(path_cov, path_cov_tr)
+
+    # Assemble the local velocity field
+    k_slice = (
+        + lr_rank_one * rank_one_term_u
+        + lr_rank_mu * rank_mu_term_u
+        + (1.0 - lr_decay) * k_slice_init
+        )
     k_slice -= d_psi[:, None] * basis
 
     # Augment the K-slice with random orthogonalized noise
@@ -1218,22 +1200,23 @@ def _adaptive_bug_step(
     k_aug[:, :rank] = k_slice
     if aug_size > 0:
         random_noise = randn(dim, aug_size)
-        orthogonal_noise = random_noise - basis @ (basis.T @ random_noise)
+        orthogonal_noise = random_noise - basis @ (basis_T @ random_noise)
         q_orth, _ = qr(orthogonal_noise)
         k_aug[:, rank:max_rank] = q_orth
 
     # Compute a new augmented basis via QR
     uhat_aug, _ = qr(k_aug)
+    uhat_aug_T = uhat_aug.T
 
     # Project the old basis into the augmented space
-    m_proj = uhat_aug.T @ basis
+    m_proj = uhat_aug_T @ basis
     ext_s = m_proj @ core @ m_proj.T
 
     # Perform the rank-mu and rank-one updates in the augmented space
     steps_aug_tr = steps_sorted @ uhat_aug
-    rank_mu_term_s = steps_aug_tr.T @ (weights_sorted[:, None] * steps_aug_tr)
+    rank_mu_term_s = steps_aug_tr.T @ (weights_sorted_2d * steps_aug_tr)
 
-    path_cov_aug = uhat_aug.T @ path_cov
+    path_cov_aug = uhat_aug_T @ path_cov
     rank_one_term_s = outer(path_cov_aug, path_cov_aug)
 
     # Compute the velocity field for the core
@@ -1244,20 +1227,19 @@ def _adaptive_bug_step(
         )
 
     # Apply the matrix flow to the core and subtract the diagonal part
-    psi_diff_s = (uhat_aug.T**2) @ d_psi
+    psi_diff_s = (uhat_aug_T**2) @ d_psi
     shat = ext_s + f_core - psi_diff_s
 
     # Enforce symmetry
     shat = 0.5 * (shat + shat.T)
 
     # Perform SVD to the augmented core matrix
-    left, sigma, _ = svd(shat)
-    max_sig = sigma[0]
-    sigma_safe = maximum(sigma, max_sig / 1e12)
-    sigma_safe = maximum(1e-12, sigma_safe)
+    basis_sigma, sigma, _ = svd(shat)
+    threshold = max(1e-12, sigma[0] / 1e12)
+    sigma_safe = maximum(sigma, threshold)
 
     # Truncate back to the original rank
-    basis_new = uhat_aug @ left[:, :rank]
+    basis_new = uhat_aug @ basis_sigma[:, :rank]
     core_new = diag(sigma_safe[:rank])
 
     return basis_new, core_new, psi_new, rank
