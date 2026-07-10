@@ -23,8 +23,8 @@ from numpy import max as nmax
 from numpy import mean as nmean
 from numpy import min as nmin
 from numpy import sum as nsum
-from numpy.linalg import eigh, norm, qr, pinv, svd
-from numpy.random import default_rng, normal
+from numpy.linalg import eigh, norm, qr, svd
+from numpy.random import default_rng, normal, randn
 
 # %% Internal package import
 
@@ -134,7 +134,7 @@ class DLRCMAES:
         self.logger = Logging('DLR-CMA-ES', min_log_level)
 
         # Log a message about the initialization
-        self.logger.info('Initializing DLR-CMA-ES with SPD-BUG integrator ...')
+        self.logger.info('Initializing DLR-CMA-ES ...')
 
         # Set the random seed
         if random_state is None:
@@ -182,34 +182,60 @@ class DLRCMAES:
             )
 
         # Initialize the base weights
-        self._base_weights = (
+        base_weights = (
             log((self._pop_size + 1) / 2) - log(arange(1, self._pop_size + 1))
             ).reshape(-1, 1)
 
         # Initialize the elite size
-        self._elite_size = int(nsum(self._base_weights > 0))
+        self._elite_size = int(nsum(base_weights > 0))
 
         # Determine the sums of positive and negative base weights
-        self._bw_pos_sum = nsum(self._base_weights[:self._elite_size])
-        self._bw_neg_sum = nsum(self._base_weights[self._elite_size:])
+        bw_pos_sum = nsum(base_weights[:self._elite_size])
+        bw_neg_sum = nsum(base_weights[self._elite_size:])
 
         # Initialize the variance effective selection mass
-        self._mu_eff = (
-            self._bw_pos_sum**2 /
-            nsum(self._base_weights[:self._elite_size]**2)
-            )
-        self._mu_eff_neg = (
-            self._bw_neg_sum**2 /
-            nsum(self._base_weights[self._elite_size:]**2)
-            )
+        self._mu_eff = bw_pos_sum**2 / nsum(base_weights[:self._elite_size]**2)
+        mu_eff_neg = bw_neg_sum**2 / nsum(base_weights[self._elite_size:]**2)
 
-        # Initialize the dynamic variables
-        self._lr_sigma = 0.0
-        self._lr_cov = 0.0
-        self._lr_rank_one = 0.0
-        self._lr_rank_mu = 0.0
+        # Initialize the learning rates
+        self._lr_sigma = (
+            (self._mu_eff + 2) / (self._number_of_variables + self._mu_eff + 5)
+            )
+        self._lr_cov = (
+            (4 + self._mu_eff / self._number_of_variables) /
+            (self._number_of_variables + 4
+             + 2 * self._mu_eff/self._number_of_variables)
+            )
+        self._lr_rank_one = (
+            2 / ((self._number_of_variables + 1.3)**2 + self._mu_eff)
+            )
+        self._lr_rank_mu = min(
+            1.0 - self._lr_rank_one,
+            2.0 * (
+                (0.25 + self._mu_eff + 1.0 / self._mu_eff - 2.0) /
+                ((self._number_of_variables + 2.0)**2
+                 + 2.0 * self._mu_eff / 2.0)
+                )
+            )
         self._lr_mean = 1.0
-        self._weights = zeros((self._pop_size, 1), order='F', dtype=float64)
+
+        # Determine the alpha values
+        alpha_mu_neg = 1.0 + self._lr_rank_one / (self._lr_rank_mu + 1e-12)
+        alpha_mu_eff_neg = 1.0 + (2.0 * mu_eff_neg) / (self._mu_eff + 2.0)
+        alpha_posdef_neg = (
+            (1.0 - self._lr_rank_one - self._lr_rank_mu)
+            / (self._number_of_variables * self._lr_rank_mu + 1e-12)
+            )
+        alpha_min = min(alpha_mu_neg, alpha_mu_eff_neg, alpha_posdef_neg)
+
+        # Set the weights
+        self._weights = where(
+            base_weights > 0,
+            (1.0 / bw_pos_sum) * base_weights,
+            (alpha_min / (abs(bw_neg_sum) + 1e-12)) * base_weights
+            ).reshape(-1, 1)
+
+        # Initialize the rank-dependent variables
         self._damp_sigma = 0.0
         self._expected_path_length = 0.0
 
@@ -237,7 +263,7 @@ class DLRCMAES:
         self._mean = zeros(self._number_of_variables, dtype=float64)
 
         init_var = 1.0
-        alpha = 0.5
+        alpha = 1.0
         self._basis = eye(
             self._number_of_variables, self.rank, order='F', dtype=float64
             )
@@ -268,49 +294,6 @@ class DLRCMAES:
 
         # Get the current rank and dimensionality of the problem
         rank = self.rank
-        dim = self._number_of_variables
-
-        # Initialize the step size learning rate (depending on rank)
-        self._lr_sigma = (self._mu_eff + 2.0) / (rank + self._mu_eff + 5.0)
-
-        # Initialize the covariance learning rates (depending on full space)
-        self._lr_cov = (
-            (4.0 + self._mu_eff / dim) / (dim + 4.0 + 2.0 * self._mu_eff / dim)
-            )
-        self._lr_rank_one = (
-            2.0 / ((dim + 1.3)**2 + self._mu_eff)
-            )
-        self._lr_rank_mu = min(
-            1.0 - self._lr_rank_one,
-            2.0 * ((0.25 + self._mu_eff + 1.0 / self._mu_eff - 2.0) /
-                   ((dim + 2.0)**2 + 2.0 * self._mu_eff / 2.0))
-            )
-
-        # Initialize the default mean learning rate
-        self._lr_mean = 1.0
-
-        # Determine the alpha values
-        alpha_mu_neg = 1.0 + self._lr_rank_one / (self._lr_rank_mu + 1e-12)
-        alpha_mu_eff_neg = (
-            1.0 + (2.0 * self._mu_eff_neg) / (self._mu_eff + 2.0)
-            )
-        alpha_posdef_neg = (
-            (1.0 - self._lr_rank_one - self._lr_rank_mu)
-            / (dim * self._lr_rank_mu + 1e-12)
-            )
-        alpha_min = min(alpha_mu_neg, alpha_mu_eff_neg, alpha_posdef_neg)
-
-        # Generate a mask for positive base weights
-        pos_mask = self._base_weights > 0
-
-        # Set the weights
-        self._weights[pos_mask] = (
-            (1.0 / self._bw_pos_sum) * self._base_weights[pos_mask]
-            )
-        self._weights[~pos_mask] = (
-            (alpha_min / (nabs(self._bw_neg_sum) + 1e-12))
-            * self._base_weights[~pos_mask]
-            )
 
         # Initialize the damping coefficient (depending on rank)
         self._damp_sigma = (
@@ -492,7 +475,7 @@ class DLRCMAES:
 
     def tell(self, fitness):
         """
-        Update the state variables and perform an SPD-BUG step.
+        Update the state variables and perform an adaptive BUG step.
 
         Parameters
         ----------
@@ -530,11 +513,8 @@ class DLRCMAES:
         self._mean[:] = mean_new
         self._path_cov[:] = path_cov_new
 
-        # Store the old basis before updating
-        basis_old = self._basis.copy()
-
         # Update the low-rank and noise factors
-        basis_new, core_new, psi_new, rank_new = _spd_bug_step(
+        basis_new, core_new, psi_new, rank_new = _adaptive_bug_step(
             self._basis,
             self._core,
             self._core_evals,
@@ -549,29 +529,6 @@ class DLRCMAES:
             update_switch=update_switch,
             force_expansion=self.check_rank_expansion()
             )
-
-        # 1. Berechne die r x r Transformationsmatrix
-        projection_matrix = basis_new.T @ basis_old
-
-        # 2. Projiziere den voll-dimensionalen Pfad auf die alte Basis,
-        # um Koordinaten der Länge (rank,) zu erhalten
-        path_cov_old = basis_old.T @ self._path_cov
-
-        # 3. Wende die Basenverschiebung an -> ergibt Koordinaten im neuen Raum
-        path_cov_new = projection_matrix @ path_cov_old
-
-        # 4. Zurück in den voll-dimensionalen Raum einbetten
-        self._path_cov = basis_new @ path_cov_new
-
-        # Check if the subspace shrinks
-        if rank_new < self.rank:
-
-            # Get the retention ratio
-            ratio = rank_new / self.rank
-
-            # Damp the evolution paths
-            self._path_cov *= ratio
-            self._path_sigma *= ratio
 
         # Save the factor states
         self._basis[:] = basis_new
@@ -687,6 +644,11 @@ class DLRCMAES:
         bool
             Indicator for expanding the rank.
         """
+
+        # Check if the current rank equals the dimensionality
+        if self.rank == self._number_of_variables:
+
+            return False
 
         # Initialize the number of positive and required votes
         votes = 0
@@ -1144,16 +1106,16 @@ def _tell(
 #         ),
 #     fastmath=True
 #     )
-def _spd_bug_step(
+def _adaptive_bug_step(
     basis, core, core_evals, core_evecs, psi, steps_sorted, weights, path_cov,
     lr_cov, lr_rank_one, lr_rank_mu, update_switch, force_expansion):
-    """Perform an update step of the SPD-BUG integrator."""
+    """Perform an update step of the adaptive BUG integrator."""
 
     # Get the dimension and rank
     dim, rank = basis.shape
 
     # Determine the maximum rank and the augmentation size
-    max_rank = min(2 * rank, dim) if force_expansion else rank
+    max_rank = min(2 * rank, dim)
     aug_size = max_rank - rank
 
     # Copy and flatten the weights
@@ -1163,7 +1125,7 @@ def _spd_bug_step(
         """Evaluate the velocity field F."""
 
         # Check if the input basis matches the core dimensions
-        if input_basis.shape[1] == core.shape[0]:
+        if input_basis.shape[0] == core.shape[0]:
 
             # Construct the local K-slice by the original formula
             k_slice_local = input_basis @ core + psi[:, None] * input_basis
@@ -1171,7 +1133,7 @@ def _spd_bug_step(
         else:
 
             # Use a fallback to calculate the local K-slice
-            k_slice_local = matrix + psi[:, None] * input_basis
+            k_slice_local = matrix
 
         # Transform the steps
         steps_tr = steps_sorted @ input_basis
@@ -1185,9 +1147,9 @@ def _spd_bug_step(
 
         # Assemble the local velocity field
         f_local = (
-            decay_rate * k_slice_local
             + lr_rank_one * rank_one_term_u
             + lr_rank_mu * rank_mu_term_u
+            - decay_rate * k_slice_local
             )
 
         return f_local
@@ -1223,36 +1185,42 @@ def _spd_bug_step(
         )
 
     # Get the decay rate
-    lr_decay = 1.0 - lr_rank_one - lr_rank_mu + lr_rank_one_adj
+    lr_decay = lr_rank_one + lr_rank_mu - lr_rank_one_adj
 
-    # Calculate the initial K-slice
-    k_slice_init = basis @ core + psi[:, None] * basis
+    # Get the rank-one and rank-mu terms
+    rank_mu_term = steps_sorted.T @ (weights_sorted[:, None] * steps_sorted)
+    rank_one_term = outer(path_cov, path_cov)
 
-    # Build the projection basis
-    identity = eye(dim)
-    u_proj = identity - basis @ basis.T
-    u_proj_had = u_proj * u_proj
-    u_proj_had_pinv = pinv(u_proj_had, rcond=1e-12)
+    # Get the diagonal update variance
+    growth_var = (
+        lr_rank_one * diag(rank_one_term)
+        + lr_rank_mu * diag(rank_mu_term)
+        )
 
-    # Compute the velocity field for the diagonal part
-    y_mat = k_slice_init @ basis.T
-    vel_field = evaluate_velocity_field(y_mat, identity, lr_decay)
-    f_diff = vel_field - y_mat
+    # Get the variance of the low-rank component
+    low_rank_diag = diag(basis @ core @ basis.T)
 
-    # Update psi
-    d_psi = u_proj_had_pinv @ diag(u_proj @ f_diff @ u_proj)
-    psi_new = maximum(1e-10, psi + d_psi)
+    # Get the delta psi from the unaccounted variance
+    delta_psi_raw = growth_var - (low_rank_diag + psi)
+
+    # Update psi and save the change
+    psi_new = maximum(1e-4, psi + lr_decay * delta_psi_raw)
+    d_psi = psi_new - psi
 
     # Update the local K-slice and apply the diagonal correction
+    k_slice_init = basis @ core + psi[:, None] * basis
     k_slice = evaluate_velocity_field(k_slice_init, basis, lr_decay)
+    k_slice += k_slice_init
     k_slice -= d_psi[:, None] * basis
 
-    # Augment the K-slice with the previous basis
+    # Augment the K-slice with random orthogonalized noise
     k_aug = zeros((dim, max_rank))
     k_aug[:, :rank] = k_slice
     if aug_size > 0:
-        q_orth, _ = qr(u_proj)
-        k_aug[:, rank:max_rank] = q_orth[:, :aug_size]
+        random_noise = randn(dim, aug_size)
+        orthogonal_noise = random_noise - basis @ (basis.T @ random_noise)
+        q_orth, _ = qr(orthogonal_noise)
+        k_aug[:, rank:max_rank] = q_orth
 
     # Compute a new augmented basis via QR
     uhat_aug, _ = qr(k_aug)
@@ -1270,13 +1238,13 @@ def _spd_bug_step(
 
     # Compute the velocity field for the core
     f_core = (
-        lr_decay * ext_s
         + lr_rank_one * rank_one_term_s
         + lr_rank_mu * rank_mu_term_s
+        - lr_decay * ext_s
         )
 
     # Apply the matrix flow to the core and subtract the diagonal part
-    psi_diff_s = uhat_aug.T @ (d_psi[:, None] * uhat_aug)
+    psi_diff_s = (uhat_aug.T**2) @ d_psi
     shat = ext_s + f_core - psi_diff_s
 
     # Enforce symmetry

@@ -182,12 +182,8 @@ class CMAES:
         bw_neg_sum = nsum(base_weights[self._elite_size:])
 
         # Initialize the variance effective selection mass
-        self._mu_eff = (
-            bw_pos_sum**2 / nsum(base_weights[:self._elite_size]**2)
-            )
-        mu_eff_neg = (
-            bw_neg_sum**2 / nsum(base_weights[self._elite_size:]**2)
-            )
+        self._mu_eff = bw_pos_sum**2 / nsum(base_weights[:self._elite_size]**2)
+        mu_eff_neg = bw_neg_sum**2 / nsum(base_weights[self._elite_size:]**2)
 
         # Initialize the learning rates
         self._lr_sigma = (
