@@ -40,10 +40,10 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Bent-Cigar'
+name = 'Ackley'
 
 # Enter the problem dimensionality
-ndim = 100
+ndim = 80
 
 # Get the benchmark function class
 problems = {
@@ -80,7 +80,7 @@ with MonitorDLRCMAES(
         # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        low_rank_dimension=None,
+        low_rank_dimension=79,
         maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,
