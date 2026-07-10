@@ -271,7 +271,7 @@ class DLRCMAES:
         self._core_evals = (alpha * init_var) * ones(self.rank, dtype=float64)
         self._core_evecs = eye(self.rank, order='F', dtype=float64)
 
-        # Allocate any variance not captured by the low-rank basis to psi directly
+        # Allocate variance not captured by low-rank basis to psi directly
         low_rank_diag = diag(self._basis @ self._core @ self._basis.T)
         self._psi = maximum(
             0.0, init_var - low_rank_diag
