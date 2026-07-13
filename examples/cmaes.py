@@ -40,7 +40,7 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Rosenbrock'
+name = 'Sphere'
 
 # Enter the problem dimensionality
 ndim = 10

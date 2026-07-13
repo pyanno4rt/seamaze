@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "seamaze"
-version = "0.0.4"
+version = "0.0.5"
 description = "A python library for classical, limited-memory, and dynamical low-rank covariance matrix adaptation evolution strategy."
 license = "MIT"
 authors = [ "Tim Ortkamp <tim.ortkamp@gmx.de>" ]

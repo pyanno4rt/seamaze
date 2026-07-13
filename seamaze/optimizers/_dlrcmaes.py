@@ -7,24 +7,24 @@ Dynamical low-rank covariance matrix adaptation evolution strategy
 
 # %% External package import
 
+from signal import getsignal, SIGINT, signal
 from time import time
 
 from collections import deque
 from math import inf
 from numba import njit, types
 from numpy import (
-    add, arange, argmax, argmin, argsort, array, ascontiguousarray,
-    asfortranarray, clip, diag, exp, eye, float64, full, isinf, log, maximum,
-    minimum, ptp, ones, outer, sqrt, where, zeros)
+    add, arange, argmin, argsort, array, asfortranarray, clip, diag, exp, eye,
+    float64, full, isinf, log, maximum, minimum, ptp, ones, outer, sqrt, where,
+    zeros)
 from numpy import abs as nabs
-from numpy import all as nall
 from numpy import any as nany
 from numpy import max as nmax
 from numpy import mean as nmean
 from numpy import min as nmin
 from numpy import sum as nsum
-from numpy.linalg import eigh, norm, qr, svd
-from numpy.random import default_rng, normal, randn
+from numpy.linalg import eigh, norm, qr
+from numpy.random import default_rng, randn
 
 # %% Internal package import
 
@@ -46,6 +46,13 @@ class DLRCMAES:
         low-rank covariance matrix adaptation hybrid evolution strategy for
         computationally efficient large-scale constrained optimization.
         (unpublished).
+
+    Here, the covariance matrix is represented as a sum of a diagonal variance
+    component and a low-rank correlation component:
+
+        C = diag(psi) + USU^T,
+
+    where psi captures marginal variances and USU^T models dependencies.
 
     Parameters
     ----------
@@ -73,8 +80,18 @@ class DLRCMAES:
     initial_sigma : float, default=0.3
         Initial step size.
 
-    low_rank_dimension : int, default=None
-        Initial rank of the approximation. Defaults to `number_of_variables`.
+    low_rank_init_dimension : int, default=None
+        Initial rank of the approximation. Defaults to
+        4 + int(3*log(`number_of_variables`)).
+
+    low_rank_max_dimension : int, default=None
+        Maximum rank of the approximation. Defaults to `number_of_variables`.
+
+    low_rank_is_adaptive : bool, default=True
+        Indicator for adaptive low-rank selection.
+
+    low_rank_energy_tolerance : float, default=1e-8
+        Maximum fraction of discarded low-rank energy for rank truncation.
 
     maximum_iterations : int, default=100000
         Maximum number of generations (iterations) to run before stopping.
@@ -98,6 +115,13 @@ class DLRCMAES:
         Minimum allowed step size. If the step size falls below this limit, \
         optimization stops (convergence/collapse criterion).
 
+    update_interval : int, default=None
+        Frequency of the covariance update (in generations). Larger values
+        (e.g. 10) can significantly speed up the algorithm for
+        high-dimensional problems. Defaults to \
+        max(1, 0.1/(`number_of_variables`*β)), where β is the sum of the
+        rank-1 and rank-mu learning rates.
+
     min_log_level : {'debug', 'info', 'warning', 'error', 'critical'}, \
         default='debug'
         Minimum logging level for passing messages to the console.
@@ -119,13 +143,17 @@ class DLRCMAES:
             upper_variable_bounds=None,
             number_of_individuals=None,
             initial_sigma=0.3,
-            low_rank_dimension=None,
+            low_rank_init_dimension=None,
+            low_rank_max_dimension=None,
+            low_rank_is_adaptive=True,
+            low_rank_energy_tolerance=1e-8,
             maximum_iterations=100000,
             maximum_wall_time=43200,
             fitness_threshold=-inf,
             fitness_window_size=50,
             tolerance=1e-6,
             sigma_threshold=1e-8,
+            update_interval=None,
             min_log_level='debug',
             callback=None,
             random_state=42):
@@ -175,11 +203,30 @@ class DLRCMAES:
             )
         self._pop_size += (2 if self.gradient is not None else 0)
 
-        # Determine the integrator rank
-        self.rank = min(
-            max(1, low_rank_dimension or self._number_of_variables),
+        # Get the low-rank adaptivity parameters
+        default_rank = 4 + int(3 * log(self._number_of_variables))
+        self._low_rank_init_dimension = min(
+            max(
+                1,
+                default_rank if low_rank_init_dimension is None
+                else low_rank_init_dimension
+                ),
             self._number_of_variables
             )
+        self._low_rank_max_dimension = min(
+            max(
+                self._low_rank_init_dimension,
+                self._number_of_variables
+                if low_rank_max_dimension is None
+                else low_rank_max_dimension
+                ),
+            self._number_of_variables
+            )
+        self._low_rank_is_adaptive = low_rank_is_adaptive
+        self._low_rank_energy_tolerance = low_rank_energy_tolerance
+
+        # Determine the integrator rank
+        self.rank = self._low_rank_init_dimension
 
         # Initialize the base weights
         base_weights = (
@@ -235,12 +282,23 @@ class DLRCMAES:
             (alpha_min / (abs(bw_neg_sum) + 1e-12)) * base_weights
             ).reshape(-1, 1)
 
-        # Initialize the rank-dependent variables
-        self._damp_sigma = 0.0
-        self._expected_path_length = 0.0
+        # Initialize the damping coefficient
+        self._damp_sigma = (
+            1.0 + 2.0 * max(
+                0.0,
+                sqrt((self._mu_eff - 1.0)/(self._number_of_variables + 1.0))
+                - 1.0
+                )
+            + self._lr_sigma
+            )
 
-        # Update the dynamic variables
-        self._update_dynamics()
+        # Initialize the expected path length
+        self._expected_path_length = (
+            sqrt(self._number_of_variables) * (
+                1.0
+                - 1.0 / (4.0 * self._number_of_variables)
+                + 1.0 / (21.0 * self._number_of_variables**2))
+            )
 
         # Initialize the bound/constraint handling parameters
         self._squared_bound_errors = None
@@ -263,13 +321,11 @@ class DLRCMAES:
         self._mean = zeros(self._number_of_variables, dtype=float64)
 
         init_var = 1.0
-        alpha = 1.0
+        alpha = min(0.5, self.rank / self._number_of_variables)
         self._basis = eye(
             self._number_of_variables, self.rank, order='F', dtype=float64
             )
-        self._core = (alpha * init_var) * eye(self.rank, dtype=float64)
-        self._core_evals = (alpha * init_var) * ones(self.rank, dtype=float64)
-        self._core_evecs = eye(self.rank, order='F', dtype=float64)
+        self._core = (alpha * init_var) * ones(self.rank, dtype=float64)
 
         self._psi = full(
             self._number_of_variables, (1.0 - alpha) * init_var, dtype=float64
@@ -283,29 +339,20 @@ class DLRCMAES:
         self.tolerance = tolerance
         self._fitness = None
         self._fitness_history = deque(maxlen=fitness_window_size)
+        self._update_interval = (
+            max(1, int(0.1/(self._number_of_variables*(
+                self._lr_rank_one + self._lr_rank_mu))))
+            if update_interval is None else update_interval
+            )
+        self._expansion_reasons = []
         self._callback = callback
         self._result = {
             'optimal_point': None, 'optimal_value': inf, 'solver_info': None,
             'wall_time': None, 'iterations': None
             }
 
-    def _update_dynamics(self):
-        """Update the dynamic variables."""
-
-        # Get the current rank and dimensionality of the problem
-        rank = self.rank
-
-        # Initialize the damping coefficient (depending on rank)
-        self._damp_sigma = (
-            1.0 + 2.0 * max(
-                0.0, sqrt((self._mu_eff - 1.0) / (rank + 1.0)) - 1.0)
-            + self._lr_sigma
-            )
-
-        # Initialize the expected path length (depending on rank)
-        self._expected_path_length = (
-            sqrt(rank) * (1.0 - 1.0 / (4.0 * rank) + 1.0 / (21.0 * rank**2))
-            )
+        # Initialize the stop flag
+        self._stop_requested = False
 
     def ask(self):
         """
@@ -331,11 +378,10 @@ class DLRCMAES:
             )
 
         # Calculate the root of the covariance matrix
-        safe_evals = maximum(self._core_evals, 1e-15)
-        root_cov = self._basis @ (self._core_evecs * sqrt(safe_evals))
+        sqrt_core = sqrt(maximum(self._core, 1e-15))
 
         # Transform the samples into low-rank and noisy components
-        structured_part = z_low_rank @ root_cov.T
+        structured_part = (z_low_rank * sqrt_core) @ self._basis.T
         noise_part = z_noise * sqrt(self._psi)
 
         # Get the steps by adding the components
@@ -348,8 +394,11 @@ class DLRCMAES:
             gradient = self.gradient(self._mean)
 
             # Compute the unscaled natural gradient
-            basis_grad = root_cov.T @ gradient
-            natural_gradient = root_cov @ basis_grad + self._psi * gradient
+            low_rank_gradient = (
+                self._basis
+                @ (self._core * (self._basis.T @ gradient))
+                )
+            natural_gradient = low_rank_gradient + self._psi * gradient
 
             # Compute the rescaling factor
             rescale = 1.0 / (sqrt(gradient @ natural_gradient) + 1e-15)
@@ -490,8 +539,7 @@ class DLRCMAES:
             self._steps,
             self._weights,
             self._basis,
-            self._core_evals,
-            self._core_evecs,
+            self._core,
             self._psi,
             self._path_sigma,
             self._path_cov,
@@ -513,34 +561,32 @@ class DLRCMAES:
         self._mean[:] = mean_new
         self._path_cov[:] = path_cov_new
 
-        # Update the low-rank and noise factors
-        basis_new, core_new, psi_new, rank_new = _adaptive_bug_step(
-            self._basis,
-            self._core,
-            self._core_evals,
-            self._core_evecs,
-            self._psi,
-            self._steps[argsort(fitness)],
-            self._weights,
-            self._path_cov,
-            self._lr_cov,
-            self._lr_rank_one,
-            self._lr_rank_mu,
-            update_switch=update_switch,
-            force_expansion=self.check_rank_expansion()
-            )
+        # Check if the low-rank factors should be updated
+        if self._opt_iter % self._update_interval == 0:
 
-        # Save the factor states
-        self._basis[:] = basis_new
-        self._core[:] = core_new
-        self._psi[:] = psi_new
-        self.rank = rank_new
+            # Update the low-rank and noise factors
+            basis_new, core_new, psi_new, rank_new = _adaptive_bug_step(
+                self._basis,
+                self._core,
+                self._psi,
+                self._steps[argsort(fitness)],
+                self._weights,
+                self._path_cov,
+                self._lr_cov,
+                self._lr_rank_one,
+                self._lr_rank_mu,
+                self._low_rank_max_dimension,
+                self._low_rank_is_adaptive,
+                self._low_rank_energy_tolerance,
+                update_switch=update_switch,
+                force_expansion=self.check_rank_expansion()
+                )
 
-        # Update the eigenvalues and -vectors of the core matrix
-        self._core_evals, self._core_evecs = eigh(self._core)
-
-        # Update the dynamic variables
-        self._update_dynamics()
+            # Save the factor states
+            self._basis = basis_new
+            self._core = core_new
+            self._psi[:] = psi_new
+            self.rank = rank_new
 
     def optimize(
             self,
@@ -568,10 +614,29 @@ class DLRCMAES:
             # Set the initial mean
             self._mean = initial_mean.astype(float)
 
+        # Get the previous signal handler
+        old_handler = getsignal(SIGINT)
+
+        # Define a custom signal handler
+        def _sigint_handler(_, __):
+            self._stop_requested = True
+
+        # Register the new handler
+        signal(SIGINT, _sigint_handler)
+
         try:
 
             # Continue until termination criteria are fulfilled
             while not self.check_termination():
+
+                # Check if a program stop has been requested
+                if self._stop_requested:
+
+                    # Log a message about the user stopping
+                    self.logger.warning("Optimization interrupted by user ...")
+                    self._result['solver_info'] = 'STOPPED_BY_USER'
+
+                    break
 
                 # Increment the iteration counter
                 self._opt_iter += 1
@@ -597,11 +662,10 @@ class DLRCMAES:
                     f'f={round(self._result["optimal_value"], 6)}'
                     )
 
-        except KeyboardInterrupt:
+        finally:
 
-            # Log a message about the user stopping
-            self.logger.warning("Optimization interrupted by user ...")
-            self._result['solver_info'] = 'STOPPED_BY_USER'
+            # Restore the original signal handler
+            signal(SIGINT, old_handler)
 
         # Store the runtime and iterations
         self._result['wall_time'] = time() - self._wall_start
@@ -654,6 +718,9 @@ class DLRCMAES:
         votes = 0
         required = 2
 
+        # Initialize the expansion reasons
+        reasons = []
+
         # Get the maximum and minimum eigenvalue
         max_eval, min_eval = _approx_spectrum_extremes(
             self._basis,
@@ -667,11 +734,30 @@ class DLRCMAES:
             # Increment the votes
             votes += 1
 
+            # Add the expansion reason
+            reasons.append('cov_condition')
+
         # Check if the fitness history has been completely filled
         if len(self._fitness_history) == self._fitness_history.maxlen:
 
             # Get the fitness history
             history = array(self._fitness_history)
+
+            # Split the history
+            half = history.size // 2
+
+            # Compute the average fitness
+            fit_old = nmean(history[:half])
+            fit_new = nmean(history[half:])
+
+            # Check if the relative improvement is very small
+            if abs(fit_old - fit_new) / (abs(fit_old) + 1e-15) < 1e-3:
+
+                # Increment the votes
+                votes += 1
+
+                # Add the expansion reason
+                reasons.append('fitness_stagnation')
 
             # Get the mean fitness
             fit_mean = nmean(history)
@@ -679,24 +765,46 @@ class DLRCMAES:
             # Get the fitness range
             fit_range = ptp(history)
 
-            # Check if the fitness stagnates prior to convergence
-            if (fit_range > self.tolerance and
-                    (fit_range / (nabs(fit_mean) + 1e-15) < 1e-3)):
+            # Check if the fitness variation is very small
+            if fit_range / (abs(fit_mean) + 1e-15) < 1e-3:
 
                 # Increment the votes
                 votes += 1
 
-            # Get the centered time steps
-            indices = arange(len(history)) - (len(history) - 1) / 2.0
+                # Add the expansion reason
+                reasons.append("fitness_uniformity")
 
-            # Compute the slope over the time steps
-            slope = nsum(indices * (history - fit_mean)) / nsum(indices**2)
+        # Get the ratio of covariance path energy outside the basis
+        path_cov_residual = (
+            self._path_cov - self._basis @ (self._basis.T @ self._path_cov)
+            )
+        ratio = norm(path_cov_residual)**2 / (norm(self._path_cov)**2 + 1e-15)
 
-            # Check if the linear trend is too small
-            if abs(slope) / (nabs(fit_mean) + 1e-15) < 1e-4:
+        # Check if the ratio is larger than 30 %
+        if ratio > 0.3:
 
-                # Increment the votes
-                votes += 1
+            # Increment the votes
+            votes += 1
+
+            # Add the expansion reason
+            reasons.append('path_outside_basis')
+
+        # Get the effective rank of the low-rank component
+        effective_rank = (
+            (self._core.sum()**2) / ((self._core**2).sum() + 1e-15)
+            )
+
+        # Check if the effective rank is reasonably large
+        if effective_rank > 0.9 * self.rank:
+
+            # Increment the votes
+            votes += 1
+
+            # Add the expansion reason
+            reasons.append('core_uniformity')
+
+        # Add the reasons to the reason history
+        self._expansion_reasons.append(reasons)
 
         return votes >= required
 
@@ -745,7 +853,7 @@ class DLRCMAES:
             )
 
         # Check if any eigenvalue is zero or the condition number explodes
-        if min_eval <= 0 or (max_eval / (min_eval + 1e-15)) >= 1e14:
+        if min_eval < 1e-14 or (max_eval / (min_eval + 1e-15)) >= 1e14:
 
             # Add the solver info
             self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'
@@ -791,19 +899,6 @@ class DLRCMAES:
 
                 return True
 
-        # Get the longest axis
-        safe_evals = maximum(self._core_evals, 1e-15)
-        root_cov = self._basis @ (self._core_evecs * sqrt(safe_evals))
-        longest_axis = root_cov[:, argmax(norm(root_cov, axis=0))]
-
-        # Check if the mean is not shifted along the longest axis
-        if nall(self._mean == (self._mean + 0.1 * self._sigma * longest_axis)):
-
-            # Add the solver info
-            self._result['solver_info'] = 'NO_EFFECT_AXIS'
-
-            return True
-
         return False
 
 
@@ -821,7 +916,7 @@ bo = types.bool_
     types.Tuple((f8, f8))(
         # Return: Tuple(max_eval, min_eval)
         f8_2d_f,        # basis
-        f8_2d_c,        # core
+        f8_1d,          # core
         f8_1d,          # psi
         ),
     fastmath=True
@@ -842,7 +937,7 @@ def _approx_spectrum_extremes(basis, core, psi):
         min_eval = 1e-12
 
     # Draw a random vector from the standard normal distribution
-    sample = normal(0.0, 1.0, size=dim)
+    sample = randn(dim)
 
     # Get the sample norm
     sample_norm = norm(sample)
@@ -853,14 +948,11 @@ def _approx_spectrum_extremes(basis, core, psi):
         # Normalize the vector
         sample = sample / sample_norm
 
-    # Initialize the update vector
-    update_vec = zeros(dim, dtype=float64)
-
     # Loop for a fixed number of power iterations
-    for _ in range(5):
+    for _ in range(8):
 
         # Compute the product C*x efficiently
-        update_vec = basis @ (core @ (basis.T @ sample)) + psi * sample
+        update_vec = basis @ (core * (basis.T @ sample)) + psi * sample
 
         # Get the norm of the update vector
         vec_norm = norm(update_vec)
@@ -884,12 +976,12 @@ def _approx_spectrum_extremes(basis, core, psi):
         # Return: approximation
         f8_1d,          # elite_mean_step
         f8_2d_f,        # basis
-        f8_2d_c,        # core
+        f8_1d,          # core
         f8_1d,          # psi
         ),
     fastmath=True
     )
-def _lanczos_inverse_square_root(elite_mean_step, basis, core, psi):
+def _lanczos_matrix_inverse_sqrt_product(elite_mean_step, basis, core, psi):
     """Compute the inverse matrix square root-vector product C^(-1/2)*x."""
 
     # Get the norm of the elite mean step
@@ -905,7 +997,7 @@ def _lanczos_inverse_square_root(elite_mean_step, basis, core, psi):
     dim, rank = basis.shape
 
     # Determine the Krylov dimension
-    krylov_dim = min(dim, 3 * rank, 100)
+    krylov_dim = min(dim, max(30, 3 * rank), 100)
 
     # Initialize the coefficients and the Krylov subspace basis
     alpha = zeros(krylov_dim, dtype=float64)
@@ -926,7 +1018,7 @@ def _lanczos_inverse_square_root(elite_mean_step, basis, core, psi):
 
         # Generate the next Krylov vector
         update_vec = (
-            basis @ (core @ (basis.T @ current_basis)) + psi * current_basis
+            basis @ (core * (basis.T @ current_basis)) + psi * current_basis
             )
 
         # Loop until the current dimension of the Krylov subspace
@@ -982,7 +1074,8 @@ def _lanczos_inverse_square_root(elite_mean_step, basis, core, psi):
     tridiagonal_evals, tridiagonal_evecs = eigh(tridiagonal)
 
     # Safeguard against small eigenvalues
-    tridiagonal_evals = maximum(tridiagonal_evals, 1e-15)
+    threshold = max(1e-15, tridiagonal_evals[-1] * 1e-12)
+    tridiagonal_evals = maximum(tridiagonal_evals, threshold)
 
     # Calculate the inner vector (T^(-1/2) * e_1||x||)
     inv_sqrt_evals = 1.0 / sqrt(tridiagonal_evals)
@@ -1005,8 +1098,7 @@ def _lanczos_inverse_square_root(elite_mean_step, basis, core, psi):
         f8_2d,          # steps
         f8_2d,          # weights
         f8_2d_f,        # basis
-        f8_1d,          # core_evals
-        f8_2d,          # core_evecs
+        f8_1d,          # core
         f8_1d,          # psi
         f8_1d,          # path_sigma
         f8_1d,          # path_cov
@@ -1024,9 +1116,9 @@ def _lanczos_inverse_square_root(elite_mean_step, basis, core, psi):
     fastmath=True
     )
 def _tell(
-    fitness, steps, weights, basis, core_evals, core_evecs, psi, path_sigma,
-    path_cov, mean, sigma, lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma,
-    expected_path_length, opt_iter, elite_size):
+    fitness, steps, weights, basis, core, psi, path_sigma, path_cov, mean,
+    sigma, lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma, expected_path_length,
+    opt_iter, elite_size):
     """Update the state variables."""
 
     # Get the elite indices
@@ -1039,15 +1131,13 @@ def _tell(
         steps[elite_indices] * elite_weights, axis=0
         )
 
-    # Reconstruct the core matrix
-    core_evecs_transposed = ascontiguousarray(core_evecs.T)
-    core = (core_evecs * core_evals) @ core_evecs_transposed
-
     # Update the step size evolution path
     path_sigma *= (1.0 - lr_sigma)
     path_sigma += (
         sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff)
-        * _lanczos_inverse_square_root(elite_mean_step, basis, core, psi)
+        * _lanczos_matrix_inverse_sqrt_product(
+            elite_mean_step, basis, core, psi
+            )
         )
 
     # Get the norm of the step size evolution path
@@ -1088,12 +1178,61 @@ def _tell(
 
 
 @njit(
-    types.Tuple((f8_2d, f8_2d, f8_1d, i8))(
+    i8(
+        # Return: rank
+        f8_1d,          # eigenvalues
+        f8,             # energy_fraction
+        i8,             # min_rank
+        ),
+    fastmath=True
+    )
+def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
+    """Determine the optimal rank from the total energy criterium."""
+
+    # Initialize the total energy
+    total_energy = 0.0
+
+    # Loop over the eigenvalues
+    for index in range(eigenvalues.size):
+
+        # Check if the eigenvalue is positive
+        if eigenvalues[index] > 0.0:
+
+            # Cumulate the total energy
+            total_energy += eigenvalues[index]
+
+    # Check if the total energy is very small
+    if total_energy <= 1e-15:
+
+        # Return the minimum rank
+        return min_rank
+
+    # Initialize the cumulative energy
+    cumulative = 0.0
+
+    # Loop over the eigenvalues
+    for index in range(eigenvalues.size):
+
+        # Check if the eigenvalue is positive
+        if eigenvalues[index] > 0.0:
+
+            # Cumulate the energy
+            cumulative += eigenvalues[index]
+
+        # Check if the cumulated energy exceeds the requested fraction
+        if cumulative >= energy_fraction * total_energy:
+
+            # Return the current rank
+            return max(min_rank, index + 1)
+
+    return max(min_rank, eigenvalues.size)
+
+
+@njit(
+    types.Tuple((f8_2d, f8_1d, f8_1d, i8))(
         # Return: Tuple(basis_new, core_new, psi_new, rank_new)
         f8_2d,          # basis
-        f8_2d,          # core
-        f8_1d,          # core_evals
-        f8_2d,          # core_evecs
+        f8_1d,          # core
         f8_1d,          # psi
         f8_2d,          # elite_steps
         f8_2d,          # weights
@@ -1101,22 +1240,26 @@ def _tell(
         f8,             # lr_cov
         f8,             # lr_rank_one
         f8,             # lr_rank_mu
+        i8,             # low_rank_max_dimension
+        bo,             # low_rank_is_adaptive
+        f8,             # low_rank_energy_tolerance
         f8,             # update_switch
         bo              # force_expansion
         ),
     fastmath=True
     )
 def _adaptive_bug_step(
-    basis, core, core_evals, core_evecs, psi, steps_sorted, weights, path_cov,
-    lr_cov, lr_rank_one, lr_rank_mu, update_switch, force_expansion):
+    basis, core, psi, steps_sorted, weights, path_cov, lr_cov, lr_rank_one,
+    lr_rank_mu, low_rank_max_dimension, low_rank_is_adaptive,
+    low_rank_energy_tolerance, update_switch, force_expansion):
     """Perform an update step of the adaptive BUG integrator."""
 
     # Get the dimension and rank
     dim, rank = basis.shape
 
     # Get the transposed basis and the basis-core product
-    basis_T = basis.T
-    basis_core = basis @ core
+    basis_tr = basis.T
+    basis_core = basis * core
 
     # Determine the maximum rank and the augmentation size
     max_rank = min(2 * rank, dim)
@@ -1126,7 +1269,7 @@ def _adaptive_bug_step(
     weights_sorted = weights.ravel().copy()
     weights_sorted_2d = weights_sorted.reshape((-1, 1))
 
-    # Transform the steps
+    # Transform the steps for negative-weight stabilization
     steps_sorted_tr = steps_sorted @ basis
 
     # Get the indices for the negative weights
@@ -1136,11 +1279,11 @@ def _adaptive_bug_step(
     if neg_indices.size > 0:
 
         # Get the inverse square root of the core matrix
-        safe_evals = maximum(1e-14, core_evals)
-        inv_sqrt_core = (core_evecs * (1.0 / sqrt(safe_evals))) @ core_evecs.T
+        safe_core = maximum(1e-14, core)
+        inv_sqrt_core = 1.0 / sqrt(safe_core)
 
         # Perform an isotropic transformation
-        steps_neg_iso = steps_sorted_tr[neg_indices] @ inv_sqrt_core
+        steps_neg_iso = steps_sorted_tr[neg_indices] * inv_sqrt_core
 
         # Get the squared norms of the isotropic vectors
         squared_z_norms = nsum(steps_neg_iso**2, axis=1)
@@ -1159,87 +1302,133 @@ def _adaptive_bug_step(
     # Get the decay rate
     lr_decay = lr_rank_one + lr_rank_mu - lr_rank_one_adj
 
-    # Get the diagonal update variance
-    growth_var = (
-        lr_rank_one * (path_cov * path_cov)
-        + lr_rank_mu * nsum(weights_sorted_2d * steps_sorted**2, axis=0)
+    # Compute the diagonal-free rank-one update
+    rank_one_full = outer(path_cov, path_cov)
+    rank_one_diag = diag(rank_one_full)
+    rank_one_full -= diag(rank_one_diag)
+    rank_one_term_u = rank_one_full @ basis
+
+    # Compute the diagonal-free rank-mu update
+    rank_mu_full = steps_sorted.T @ (weights_sorted_2d * steps_sorted)
+    rank_mu_diag = diag(rank_mu_full)
+    rank_mu_full -= diag(rank_mu_diag)
+    rank_mu_term_u = rank_mu_full @ basis
+
+    # Determine the variance (diagonal) of the growth field
+    growth_var = clip(
+        lr_rank_one * rank_one_diag + lr_rank_mu * rank_mu_diag,
+        -0.1 * psi, None
         )
 
-    # Get the variance of the low-rank component
-    low_rank_diag = nsum((basis_core) * basis, axis=1)
+    # Update psi with the growth field variance
+    psi_new = maximum(1e-12, (1.0 - lr_decay) * psi + growth_var)
 
-    # Get the delta psi from the unaccounted variance
-    delta_psi_raw = growth_var - (low_rank_diag + psi)
+    # Set the initial state for the K-slice
+    k_slice_init = basis_core
 
-    # Update psi and save the change
-    psi_new = maximum(1e-4, psi + lr_decay * delta_psi_raw)
-    d_psi = psi_new - psi
-
-    # Update the local K-slice and apply the diagonal correction
-    k_slice_init = basis_core + psi[:, None] * basis
-
-    # Compute the rank-mu update term
-    rank_mu_term_u = (
-        steps_sorted.T @ (weights_sorted_2d * steps_sorted_tr)
-        )
-
-    # Compute the rank-one update term
-    path_cov_tr = basis_T @ path_cov
-    rank_one_term_u = outer(path_cov, path_cov_tr)
-
-    # Assemble the local velocity field
+    # Integrate the low-rank velocity field
     k_slice = (
         + lr_rank_one * rank_one_term_u
         + lr_rank_mu * rank_mu_term_u
         + (1.0 - lr_decay) * k_slice_init
         )
-    k_slice -= d_psi[:, None] * basis
 
-    # Augment the K-slice with random orthogonalized noise
+    # Augment the K-slice with random directions to allow rank adaptation
     k_aug = zeros((dim, max_rank))
     k_aug[:, :rank] = k_slice
     if aug_size > 0:
         random_noise = randn(dim, aug_size)
-        orthogonal_noise = random_noise - basis @ (basis_T @ random_noise)
+        orthogonal_noise = random_noise - basis @ (basis_tr @ random_noise)
         q_orth, _ = qr(orthogonal_noise)
         k_aug[:, rank:max_rank] = q_orth
 
-    # Compute a new augmented basis via QR
+    # Compute an orthonormal basis of the augmented low-rank subspace
     uhat_aug, _ = qr(k_aug)
-    uhat_aug_T = uhat_aug.T
+    uhat_aug_tr = uhat_aug.T
 
-    # Project the old basis into the augmented space
-    m_proj = uhat_aug_T @ basis
-    ext_s = m_proj @ core @ m_proj.T
+    # Project the existing low-rank covariance into the augmented subspace
+    proj = uhat_aug_tr @ basis
+    ext_s = (proj * core) @ proj.T
+    ext_s -= diag(diag(ext_s))
 
-    # Perform the rank-mu and rank-one updates in the augmented space
+    # Compute the diagonal-free rank-one update in the augmented space
+    path_cov_aug = uhat_aug_tr @ path_cov
+    rank_one_term_s = outer(path_cov_aug, path_cov_aug)
+    rank_one_term_s -= diag(diag(rank_one_term_s))
+
+    # Compute the diagonal-free rank-mu update in the augmented space
     steps_aug_tr = steps_sorted @ uhat_aug
     rank_mu_term_s = steps_aug_tr.T @ (weights_sorted_2d * steps_aug_tr)
+    rank_mu_term_s -= diag(diag(rank_mu_term_s))
 
-    path_cov_aug = uhat_aug_T @ path_cov
-    rank_one_term_s = outer(path_cov_aug, path_cov_aug)
-
-    # Compute the velocity field for the core
+    # Assemble the low-rank correlation velocity field
     f_core = (
         + lr_rank_one * rank_one_term_s
         + lr_rank_mu * rank_mu_term_s
         - lr_decay * ext_s
         )
 
-    # Apply the matrix flow to the core and subtract the diagonal part
-    psi_diff_s = (uhat_aug_T**2) @ d_psi
-    shat = ext_s + f_core - psi_diff_s
+    # Integrate the low-rank matrix flow
+    shat = ext_s + f_core
 
     # Enforce symmetry
     shat = 0.5 * (shat + shat.T)
 
-    # Perform SVD to the augmented core matrix
-    basis_sigma, sigma, _ = svd(shat)
-    threshold = max(1e-12, sigma[0] / 1e12)
+    # Extract the updated low-rank eigensystem
+    sigma, basis_sigma = eigh(shat)
+
+    # Sort the eigenvalues and -vectors
+    idx = argsort(sigma)[::-1]
+    sigma = sigma[idx]
+    basis_sigma = basis_sigma[:, idx]
+
+    # Apply lower threshold to the eigenvalues
+    threshold = max(1e-12, abs(sigma[0]) / 1e12)
     sigma_safe = maximum(sigma, threshold)
 
-    # Truncate back to the original rank
-    basis_new = uhat_aug @ basis_sigma[:, :rank]
-    core_new = diag(sigma_safe[:rank])
+    # Check if the rank should be adapted
+    if low_rank_is_adaptive:
 
-    return basis_new, core_new, psi_new, rank
+        # Determine rank from retained covariance energy
+        rank_energy = _energy_rank_selection(
+            sigma_safe, energy_fraction=1-low_rank_energy_tolerance, min_rank=2
+            )
+
+        # Initialize the rank delta
+        rank_delta = 0
+
+        # Check if the rank should be expanded due to the evolutionary state
+        if force_expansion:
+
+            # Increase the rank
+            rank_delta += 1
+
+        # Check if the proposed rank is smaller
+        if rank_energy < rank:
+
+            # Reduce the rank delta
+            rank_delta -= 1
+
+        # Check if the proposed rank is larger
+        elif rank_energy > rank:
+
+            # Increase the rank delta
+            rank_delta += 1
+
+        # Clip the rank to the minimum/maximum allowed rank
+        rank_new = rank + rank_delta
+        rank_new = max(2, min(rank_new, low_rank_max_dimension))
+
+    else:
+
+        # Fix the rank
+        rank_new = min(rank, low_rank_max_dimension)
+
+    # Truncate to the new rank
+    basis_new = uhat_aug @ basis_sigma[:, :rank_new]
+    core_new = sigma_safe[:rank_new]
+
+    # Ensure that the basis remains a Fortran array
+    basis_new = asfortranarray(basis_new)
+
+    return basis_new, core_new, psi_new, rank_new

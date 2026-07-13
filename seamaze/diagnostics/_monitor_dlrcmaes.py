@@ -4,7 +4,7 @@
 
 # %% External package import
 
-from numpy import mean, ndarray
+from numpy import diag_indices_from, mean, ndarray
 from numpy.linalg import eigvalsh, norm
 
 # %% Internal package import
@@ -146,6 +146,10 @@ class MonitorDLRCMAES:
                 'elite_size': solver._elite_size,
                 'expected_path_length': solver._expected_path_length.item(),
                 'fitness_threshold': solver.fitness_threshold,
+                'low_rank_init_dimension': solver._low_rank_init_dimension,
+                'low_rank_max_dimension': solver._low_rank_max_dimension,
+                'low_rank_is_adaptive': solver._low_rank_is_adaptive,
+                'low_rank_energy_tolerance': solver._low_rank_energy_tolerance,
                 'lr_cov': solver._lr_cov,
                 'lr_mean': solver._lr_mean,
                 'lr_rank_one': solver._lr_rank_one.item(),
@@ -180,14 +184,15 @@ class MonitorDLRCMAES:
 
             # Reproduce the covariance matrix
             self._cov = (
-                solver._basis[:2] @ solver._core @ solver._basis[:2].T
+                (solver._basis[:2] * solver._core) @ solver._basis[:2].T
                 )
             self._cov[0, 0] += solver._psi[0]
             self._cov[1, 1] += solver._psi[1]
 
             # Reconstruct the singular values
             psi_projected = (solver._basis.T * solver._psi) @ solver._basis
-            reduced_matrix = solver._core + psi_projected
+            reduced_matrix = psi_projected.copy()
+            reduced_matrix[diag_indices_from(reduced_matrix)] += solver._core
             dominant_svs = eigvalsh(reduced_matrix)
             self._svs = dominant_svs[::-1]
 
@@ -226,6 +231,9 @@ class MonitorDLRCMAES:
             # Record the integrator rank
             self._record('rank', solver.rank)
 
+            # Record the expansion reason
+            self._record('expansion_reasons', solver._expansion_reasons)
+
     def full(
             self,
             solver):
@@ -258,6 +266,10 @@ class MonitorDLRCMAES:
             self._record(
                 'mean_change_norm', norm(mean_vec-self._last_mean).item())
             self._last_mean = mean_vec.copy()
+
+            # Record the psi vector
+            psi_vec = solver._psi
+            self._record('psi', psi_vec)
 
             # Record the singular values
             svs = self._svs

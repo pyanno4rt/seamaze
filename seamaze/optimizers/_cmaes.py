@@ -4,6 +4,7 @@
 
 # %% External package import
 
+from signal import getsignal, SIGINT, signal
 from time import time
 
 from collections import deque
@@ -289,6 +290,9 @@ class CMAES:
             'wall_time': None, 'iterations': None
             }
 
+        # Initialize the stop flag
+        self._stop_requested = False
+
     def ask(self):
         """Generate a new population."""
 
@@ -528,10 +532,29 @@ class CMAES:
             # Set the initial mean
             self._mean = initial_mean.astype(float)
 
+        # Get the previous signal handler
+        old_handler = getsignal(SIGINT)
+
+        # Define a custom signal handler
+        def _sigint_handler(_, __):
+            self._stop_requested = True
+
+        # Register the new handler
+        signal(SIGINT, _sigint_handler)
+
         try:
 
             # Continue until termination criteria are fulfilled
             while self.check_termination() is False:
+
+                # Check if a program stop has been requested
+                if self._stop_requested:
+
+                    # Log a message about the user stopping
+                    self.logger.warning("Optimization interrupted by user ...")
+                    self._result['solver_info'] = 'STOPPED_BY_USER'
+
+                    break
 
                 # Increment the iteration counter
                 self._opt_iter += 1
@@ -557,11 +580,10 @@ class CMAES:
                     f'f={round(self._result["optimal_value"], 6)}'
                     )
 
-        except KeyboardInterrupt:
+        finally:
 
-            # Log a message about the user stopping
-            self.logger.warning("Optimization interrupted by user ...")
-            self._result['solver_info'] = 'STOPPED_BY_USER'
+            # Restore the original signal handler
+            signal(SIGINT, old_handler)
 
         # Store the runtime and iterations
         self._result['wall_time'] = time() - self._wall_start
@@ -637,7 +659,7 @@ class CMAES:
         min_eval = nmin(self._core)
 
         # Check if any eigenvalue is zero or the condition number explodes
-        if min_eval <= 0 or (max_eval / (min_eval + 1e-15)) >= 1e14:
+        if min_eval < 1e-14 or (max_eval / (min_eval + 1e-15)) >= 1e14:
 
             # Add the solver info
             self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'

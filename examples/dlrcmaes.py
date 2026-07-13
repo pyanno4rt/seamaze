@@ -40,10 +40,10 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Bent-Cigar'
+name = 'Sphere'
 
 # Enter the problem dimensionality
-ndim = 100
+ndim = 10
 
 # Get the benchmark function class
 problems = {
@@ -80,13 +80,17 @@ with MonitorDLRCMAES(
         # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        low_rank_dimension=None,
+        low_rank_init_dimension=None,
+        low_rank_max_dimension=None,
+        low_rank_is_adaptive=True,
+        low_rank_energy_tolerance=1e-8,
         maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,
         fitness_window_size=50,
         tolerance=1e-6,
         sigma_threshold=1e-8,
+        update_interval=None,
         min_log_level='debug',
         callback=monitor.full,  # Enable full monitoring
         random_state=42
