@@ -47,7 +47,7 @@ git clone https://github.com/pyanno4rt/seamaze.git
 
 ### Usage
 
-*seamaze* has three main classes which provide a classical, a limited-memory, and a dynamical low-rank CMA-ES variant. Check the 'examples' folder for detailed benchmark scripts! 
+*seamaze* has three main classes which provide a classical, a limited-memory, and a dynamical low-rank CMA-ES variant. Check out the 'examples' folder for detailed benchmark scripts! 
 
 ###### Classical CMA-ES
 
@@ -108,7 +108,7 @@ To cite *seamaze*, either use the link in the right sidebar of the Github landin
 @software{seamaze,
   title = {{seamaze}: a python library for classical, limited-memory, and dynamical low-rank covariance matrix adaptation evolution strategy},
   author = {Ortkamp, Tim and Patwardhan, Chinmay and Stammer, Pia},
-  version = {0.0.4},
+  version = {0.0.6},
   license = {MIT},
   year = {2026},
   publisher = {GitHub},
