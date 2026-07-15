@@ -25,7 +25,7 @@
 
 # General :earth_americas:
 
-*seamaze* is a Python library for classical, limited-memory and dynamical low-rank (DLR) variants of the covariance matrix adaptation evolution strategy (CMA-ES). It provides state-of-the-art, derivative-free algorithms designed for continuous, non-linear, and non-convex real-parameter optimization, excelling in ill-conditioned, non-separable, or rugged fitness landscapes. By leveraging limited-memory and DLR approximations, *seamaze* maintains computational efficiency even on high-dimensional black-box problems. This implementation further incorporates first-order information, constraint handling, and multi-stage restart mechanisms.
+*seamaze* is a Python library for classical, limited-memory, and dynamical low-rank (DLR) variants of the covariance matrix adaptation evolution strategy (CMA-ES). It provides state-of-the-art, derivative-free algorithms designed for continuous, non-linear, and non-convex real-parameter optimization, excelling in ill-conditioned, non-separable, or rugged fitness landscapes. By leveraging limited-memory and DLR approximations, *seamaze* maintains computational efficiency even on high-dimensional black-box problems. This implementation further incorporates first-order information, constraint handling, and multi-stage restart mechanisms.
 
 # Installation :computer:
 
@@ -108,7 +108,7 @@ To cite *seamaze*, either use the link in the right sidebar of the Github landin
 @software{seamaze,
   title = {{seamaze}: a python library for classical, limited-memory, and dynamical low-rank covariance matrix adaptation evolution strategy},
   author = {Ortkamp, Tim and Patwardhan, Chinmay and Stammer, Pia},
-  version = {0.0.6},
+  version = {0.0.7},
   license = {MIT},
   year = {2026},
   publisher = {GitHub},
