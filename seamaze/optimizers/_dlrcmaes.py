@@ -119,8 +119,8 @@ class DLRCMAES:
     update_interval : int, default=None
         Frequency of the covariance update (in generations). Larger values
         (e.g. 10) can significantly speed up the algorithm for
-        high-dimensional problems. Defaults to max(1, 0.1/β), where β is the
-        sum of the rank-1 and rank-mu learning rates.
+        high-dimensional problems. Defaults to int(µ_eff + 1), where µ_eff is
+        the variance effective selection mass.
 
     min_log_level : {'debug', 'info', 'warning', 'error', 'critical'}, \
         default='debug'
@@ -340,7 +340,7 @@ class DLRCMAES:
         self._fitness = None
         self._fitness_history = deque(maxlen=fitness_window_size)
         self._update_interval = (
-            max(1, int(0.1/(self._lr_rank_one + self._lr_rank_mu)))
+            int(self._mu_eff) + 1
             if update_interval is None else update_interval
             )
         self._current_expansion_reasons = []
