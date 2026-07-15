@@ -108,7 +108,7 @@ To cite *seamaze*, either use the link in the right sidebar of the Github landin
 @software{seamaze,
   title = {{seamaze}: a python library for classical, limited-memory, and dynamical low-rank covariance matrix adaptation evolution strategy},
   author = {Ortkamp, Tim and Patwardhan, Chinmay and Stammer, Pia},
-  version = {0.0.7},
+  version = {0.0.8},
   license = {MIT},
   year = {2026},
   publisher = {GitHub},

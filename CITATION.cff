@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 title: "seamaze: a python library for classical, limited-memory, and dynamical low-rank covariance matrix adaptation evolution strategy"
 message: "If you use seamaze in your work, let us now and cite this repository as below."
-version: 0.0.7
+version: 0.0.8
 type: software
 authors:
   - given-names: "Tim"
