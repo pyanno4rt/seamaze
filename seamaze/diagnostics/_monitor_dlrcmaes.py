@@ -231,8 +231,10 @@ class MonitorDLRCMAES:
             # Record the integrator rank
             self._record('rank', solver.rank)
 
-            # Record the expansion reason
-            self._record('expansion_reasons', solver._expansion_reasons)
+            # Record the current expansion reasons
+            self._record(
+                'expansion_reasons', solver._current_expansion_reasons
+                )
 
     def full(
             self,
@@ -270,6 +272,10 @@ class MonitorDLRCMAES:
             # Record the psi vector
             psi_vec = solver._psi
             self._record('psi', psi_vec)
+
+            # Record the core vector
+            core_vec = solver._core
+            self._record('core', core_vec)
 
             # Record the singular values
             svs = self._svs

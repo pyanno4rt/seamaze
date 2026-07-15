@@ -48,11 +48,12 @@ class DLRCMAES:
         (unpublished).
 
     Here, the covariance matrix is represented as a sum of a diagonal variance
-    component and a low-rank correlation component:
+    component and a diagonally-free low-rank correlation component:
 
         C = diag(psi) + USU^T,
 
-    where psi captures marginal variances and USU^T models dependencies.
+    where psi captures marginal variances and USU^T models off-diagonal
+    dependencies only, satisfying diag(USU^T) = 0.
 
     Parameters
     ----------
@@ -90,7 +91,7 @@ class DLRCMAES:
     low_rank_is_adaptive : bool, default=True
         Indicator for adaptive low-rank selection.
 
-    low_rank_energy_tolerance : float, default=1e-8
+    low_rank_energy_tolerance : float, default=1e-3
         Maximum fraction of discarded low-rank energy for rank truncation.
 
     maximum_iterations : int, default=100000
@@ -118,9 +119,8 @@ class DLRCMAES:
     update_interval : int, default=None
         Frequency of the covariance update (in generations). Larger values
         (e.g. 10) can significantly speed up the algorithm for
-        high-dimensional problems. Defaults to \
-        max(1, 0.1/(`number_of_variables`*β)), where β is the sum of the
-        rank-1 and rank-mu learning rates.
+        high-dimensional problems. Defaults to max(1, 0.1/β), where β is the
+        sum of the rank-1 and rank-mu learning rates.
 
     min_log_level : {'debug', 'info', 'warning', 'error', 'critical'}, \
         default='debug'
@@ -146,7 +146,7 @@ class DLRCMAES:
             low_rank_init_dimension=None,
             low_rank_max_dimension=None,
             low_rank_is_adaptive=True,
-            low_rank_energy_tolerance=1e-8,
+            low_rank_energy_tolerance=1e-3,
             maximum_iterations=100000,
             maximum_wall_time=43200,
             fitness_threshold=-inf,
@@ -203,31 +203,6 @@ class DLRCMAES:
             )
         self._pop_size += (2 if self.gradient is not None else 0)
 
-        # Get the low-rank adaptivity parameters
-        default_rank = 4 + int(3 * log(self._number_of_variables))
-        self._low_rank_init_dimension = min(
-            max(
-                1,
-                default_rank if low_rank_init_dimension is None
-                else low_rank_init_dimension
-                ),
-            self._number_of_variables
-            )
-        self._low_rank_max_dimension = min(
-            max(
-                self._low_rank_init_dimension,
-                self._number_of_variables
-                if low_rank_max_dimension is None
-                else low_rank_max_dimension
-                ),
-            self._number_of_variables
-            )
-        self._low_rank_is_adaptive = low_rank_is_adaptive
-        self._low_rank_energy_tolerance = low_rank_energy_tolerance
-
-        # Determine the integrator rank
-        self.rank = self._low_rank_init_dimension
-
         # Initialize the base weights
         base_weights = (
             log((self._pop_size + 1) / 2) - log(arange(1, self._pop_size + 1))
@@ -282,6 +257,32 @@ class DLRCMAES:
             (alpha_min / (abs(bw_neg_sum) + 1e-12)) * base_weights
             ).reshape(-1, 1)
 
+        # Get the low-rank adaptivity parameters
+        default_rank = 4 + int(3 * log(self._number_of_variables))
+
+        self._low_rank_max_dimension = (
+            self._number_of_variables
+            if low_rank_max_dimension is None
+            else min(low_rank_max_dimension, self._number_of_variables)
+            )
+
+        self._low_rank_init_dimension = (
+            default_rank
+            if low_rank_init_dimension is None
+            else low_rank_init_dimension
+            )
+        self._low_rank_init_dimension = min(
+            max(1, self._low_rank_init_dimension),
+            self._number_of_variables,
+            self._low_rank_max_dimension,
+            )
+
+        self._low_rank_is_adaptive = low_rank_is_adaptive
+        self._low_rank_energy_tolerance = low_rank_energy_tolerance
+
+        # Determine the integrator rank
+        self.rank = self._low_rank_init_dimension
+
         # Initialize the damping coefficient
         self._damp_sigma = (
             1.0 + 2.0 * max(
@@ -327,9 +328,8 @@ class DLRCMAES:
             )
         self._core = (alpha * init_var) * ones(self.rank, dtype=float64)
 
-        self._psi = full(
-            self._number_of_variables, (1.0 - alpha) * init_var, dtype=float64
-            )
+        self._psi = init_var * ones(self._number_of_variables, dtype=float64)
+        self._psi[:self.rank] *= (1.0 - alpha)
 
         # Initialize the stopping criteria and tracking variables
         self.maximum_iterations = maximum_iterations
@@ -340,11 +340,10 @@ class DLRCMAES:
         self._fitness = None
         self._fitness_history = deque(maxlen=fitness_window_size)
         self._update_interval = (
-            max(1, int(0.1/(self._number_of_variables*(
-                self._lr_rank_one + self._lr_rank_mu))))
+            max(1, int(0.1/(self._lr_rank_one + self._lr_rank_mu)))
             if update_interval is None else update_interval
             )
-        self._expansion_reasons = []
+        self._current_expansion_reasons = []
         self._callback = callback
         self._result = {
             'optimal_point': None, 'optimal_value': inf, 'solver_info': None,
@@ -659,7 +658,8 @@ class DLRCMAES:
                 # Log a message about the current result
                 self.logger.info(
                     f'Iteration {self._opt_iter}: '
-                    f'f={round(self._result["optimal_value"], 6)}'
+                    f'f={round(self._result["optimal_value"], 6)} '
+                    f'(r={self.rank})'
                     )
 
         finally:
@@ -706,7 +706,7 @@ class DLRCMAES:
         Returns
         -------
         bool
-            Indicator for expanding the rank.
+            Indicator for rank expansion.
         """
 
         # Check if the current rank equals the dimensionality
@@ -714,28 +714,35 @@ class DLRCMAES:
 
             return False
 
-        # Initialize the number of positive and required votes
-        votes = 0
-        required = 2
+        # Initialize the expansion pressure flags
+        path_pressure = False
+        fitness_pressure = False
 
         # Initialize the expansion reasons
         reasons = []
 
-        # Get the maximum and minimum eigenvalue
-        max_eval, min_eval = _approx_spectrum_extremes(
-            self._basis,
-            self._core,
-            self._psi
+        # Get the expected path energy fraction from a random subspace
+        expected_explained_ratio = self.rank / self._number_of_variables
+
+        # Calculate the explained path energy fraction
+        path_norm_sq = norm(self._path_cov)**2 + 1e-15
+        path_cov_proj = self._basis.T @ self._path_cov
+        path_explained_ratio = norm(path_cov_proj)**2 / path_norm_sq
+
+        # Calculate the path underrepresentation
+        path_underrepresentation = (
+            (expected_explained_ratio - path_explained_ratio)
+            / (expected_explained_ratio + 1e-15)
             )
 
-        # Check if the condition number is greater than 1e6
-        if max_eval / (min_eval + 1e-15) > 1e6:
+        # Check if the underrepresentation is larger than 50%
+        if path_underrepresentation > 0.5:
 
-            # Increment the votes
-            votes += 1
+            # Set the path pressure flag
+            path_pressure = True
 
             # Add the expansion reason
-            reasons.append('cov_condition')
+            reasons.append('path_excess_residual')
 
         # Check if the fitness history has been completely filled
         if len(self._fitness_history) == self._fitness_history.maxlen:
@@ -751,13 +758,10 @@ class DLRCMAES:
             fit_new = nmean(history[half:])
 
             # Check if the relative improvement is very small
-            if abs(fit_old - fit_new) / (abs(fit_old) + 1e-15) < 1e-3:
+            if abs(fit_old - fit_new) / max(abs(fit_old), 1.0) < 1e-3:
 
-                # Increment the votes
-                votes += 1
-
-                # Add the expansion reason
-                reasons.append('fitness_stagnation')
+                # Set the fitness pressure flag
+                fitness_pressure = True
 
             # Get the mean fitness
             fit_mean = nmean(history)
@@ -768,45 +772,19 @@ class DLRCMAES:
             # Check if the fitness variation is very small
             if fit_range / (abs(fit_mean) + 1e-15) < 1e-3:
 
-                # Increment the votes
-                votes += 1
+                # Set the fitness pressure flag
+                fitness_pressure = True
+
+            # Check if fitness pressure is applied
+            if fitness_pressure:
 
                 # Add the expansion reason
-                reasons.append("fitness_uniformity")
+                reasons.append('fitness_stagnation')
 
-        # Get the ratio of covariance path energy outside the basis
-        path_cov_residual = (
-            self._path_cov - self._basis @ (self._basis.T @ self._path_cov)
-            )
-        ratio = norm(path_cov_residual)**2 / (norm(self._path_cov)**2 + 1e-15)
+        # Update the current expansion reasons
+        self._current_expansion_reasons = reasons
 
-        # Check if the ratio is larger than 30 %
-        if ratio > 0.3:
-
-            # Increment the votes
-            votes += 1
-
-            # Add the expansion reason
-            reasons.append('path_outside_basis')
-
-        # Get the effective rank of the low-rank component
-        effective_rank = (
-            (self._core.sum()**2) / ((self._core**2).sum() + 1e-15)
-            )
-
-        # Check if the effective rank is reasonably large
-        if effective_rank > 0.9 * self.rank:
-
-            # Increment the votes
-            votes += 1
-
-            # Add the expansion reason
-            reasons.append('core_uniformity')
-
-        # Add the reasons to the reason history
-        self._expansion_reasons.append(reasons)
-
-        return votes >= required
+        return path_pressure and fitness_pressure
 
     def check_termination(self):
         """
@@ -1303,21 +1281,24 @@ def _adaptive_bug_step(
     lr_decay = lr_rank_one + lr_rank_mu - lr_rank_one_adj
 
     # Compute the diagonal-free rank-one update
-    rank_one_full = outer(path_cov, path_cov)
-    rank_one_diag = diag(rank_one_full)
-    rank_one_full -= diag(rank_one_diag)
-    rank_one_term_u = rank_one_full @ basis
+    rank_one_diag = path_cov ** 2
+    rank_one_term_u = (
+        path_cov[:, None] * (path_cov @ basis)
+        - rank_one_diag[:, None] * basis
+        )
 
     # Compute the diagonal-free rank-mu update
-    rank_mu_full = steps_sorted.T @ (weights_sorted_2d * steps_sorted)
-    rank_mu_diag = diag(rank_mu_full)
-    rank_mu_full -= diag(rank_mu_diag)
-    rank_mu_term_u = rank_mu_full @ basis
+    rank_mu_diag = nsum(weights_sorted_2d * steps_sorted**2, axis=0)
+    steps_basis = steps_sorted @ basis
+    rank_mu_term_u = (
+        steps_sorted.T @ (weights_sorted_2d * steps_basis)
+        - rank_mu_diag[:, None] * basis
+        )
 
     # Determine the variance (diagonal) of the growth field
     growth_var = clip(
-        lr_rank_one * rank_one_diag + lr_rank_mu * rank_mu_diag,
-        -0.1 * psi, None
+        lr_rank_one * rank_one_diag + lr_rank_mu * rank_mu_diag, -0.1 * psi,
+        None
         )
 
     # Update psi with the growth field variance
@@ -1389,11 +1370,6 @@ def _adaptive_bug_step(
     # Check if the rank should be adapted
     if low_rank_is_adaptive:
 
-        # Determine rank from retained covariance energy
-        rank_energy = _energy_rank_selection(
-            sigma_safe, energy_fraction=1-low_rank_energy_tolerance, min_rank=2
-            )
-
         # Initialize the rank delta
         rank_delta = 0
 
@@ -1403,17 +1379,25 @@ def _adaptive_bug_step(
             # Increase the rank
             rank_delta += 1
 
-        # Check if the proposed rank is smaller
-        if rank_energy < rank:
+        else:
 
-            # Reduce the rank delta
-            rank_delta -= 1
+            # Determine rank from retained covariance energy
+            rank_energy = _energy_rank_selection(
+                sigma_safe, energy_fraction=1-low_rank_energy_tolerance,
+                min_rank=2
+                )
 
-        # Check if the proposed rank is larger
-        elif rank_energy > rank:
+            # Check if the proposed rank is smaller
+            if rank_energy < rank:
 
-            # Increase the rank delta
-            rank_delta += 1
+                # Reduce the rank delta
+                rank_delta -= 1
+
+            # Check if the proposed rank is larger
+            elif rank_energy > rank:
+
+                # Increase the rank delta
+                rank_delta += 1
 
         # Clip the rank to the minimum/maximum allowed rank
         rank_new = rank + rank_delta

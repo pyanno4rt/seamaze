@@ -83,7 +83,7 @@ with MonitorDLRCMAES(
         low_rank_init_dimension=None,
         low_rank_max_dimension=None,
         low_rank_is_adaptive=True,
-        low_rank_energy_tolerance=1e-8,
+        low_rank_energy_tolerance=1e-3,
         maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,
