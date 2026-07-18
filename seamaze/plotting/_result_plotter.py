@@ -54,7 +54,6 @@ class ResultPlotter:
         self.show_sigma_path_norm = True
         self.show_cov_path_norm = True
         self.show_cov_svs = True
-        self.show_cov_norm = True
         self.show_cov_cn = True
         self.show_cov_spectr_norm = True
         self.show_rank = True
@@ -311,23 +310,6 @@ class ResultPlotter:
             save_path=self._get_save_path('cov_svs.pdf')
             )
 
-    def plot_covariance_norm(self):
-        """Plot the norm of the covariance matrix."""
-
-        # Check if the covariance norm should be plotted
-        if self.show_cov_norm and 'cov_norm' in self.data:
-
-            # Plot the covariance norm
-            plot_series(
-                series=self.data['cov_norm'],
-                head=None,
-                semilog=False,
-                title=f'Covariance norm ({self.label})',
-                xlabel='Generation',
-                ylabel='Value',
-                save_path=self._get_save_path('cov_norm.pdf')
-                )
-
     def plot_covariance_condition_number(self):
         """Plot the condition number of the covariance matrix."""
 
@@ -390,7 +372,6 @@ class ResultPlotter:
         self.plot_sigma_path_norm()
         self.plot_covariance_path_norm()
         self.plot_covariance_singular_values()
-        self.plot_covariance_norm()
         self.plot_covariance_condition_number()
         self.plot_covariance_spectral_norm()
         self.plot_rank()

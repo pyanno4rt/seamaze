@@ -64,8 +64,7 @@ class MonitorDLRCMAES:
         # Initialize the last mean vector
         self._last_mean = None
 
-        # Initialize the covariance matrix and singular values
-        self._cov = None
+        # Initialize the singular values
         self._svs = None
 
     @property
@@ -182,12 +181,10 @@ class MonitorDLRCMAES:
             fitness = solver._fitness
             optimal_value = solver._result['optimal_value'].item()
 
-            # Reproduce the covariance matrix
-            self._cov = (
-                (solver._basis[:2] * solver._core) @ solver._basis[:2].T
-                )
-            self._cov[0, 0] += solver._psi[0]
-            self._cov[1, 1] += solver._psi[1]
+            # Reproduce the 2x2 covariance submatrix
+            cov = (solver._basis[:2] * solver._core) @ solver._basis[:2].T
+            cov[0, 0] += solver._psi[0]
+            cov[1, 1] += solver._psi[1]
 
             # Reconstruct the singular values
             psi_projected = (solver._basis.T * solver._psi) @ solver._basis
@@ -204,7 +201,7 @@ class MonitorDLRCMAES:
                     iteration=solver._opt_iter,
                     population=solver._population,
                     mean=solver._mean,
-                    cov=self._cov,
+                    cov=cov,
                     svs=self._svs,
                     sigma=solver._sigma,
                     fitness=fitness,
@@ -227,6 +224,18 @@ class MonitorDLRCMAES:
             self._record(
                 'mean_bound_viol', 0.0 if errors is None else mean(errors))
             self._record('gamma', solver._gamma)
+
+            # Record the evolution path norms
+            self._record('path_sigma_norm', norm(solver._path_sigma).item())
+            self._record('path_cov_norm', norm(solver._path_cov).item())
+
+            # Record the covariance metrics
+            max_sv, min_sv = max(self._svs), min(self._svs)
+            self._record('cov_cn', (max_sv / (min_sv + 1e-12)).item())
+            self._record('cov_spectr_norm', max_sv.item())
+
+            # Record the step size
+            self._record('sigma', solver._sigma)
 
             # Record the integrator rank
             self._record('rank', solver.rank)
@@ -255,13 +264,6 @@ class MonitorDLRCMAES:
         # Check if the data should be updated
         if self._counter % self.interval == 0:
 
-            # Record the evolution path norms
-            self._record('path_sigma_norm', norm(solver._path_sigma).item())
-            self._record('path_cov_norm', norm(solver._path_cov).item())
-
-            # Record the step size
-            self._record('sigma', solver._sigma)
-
             # Record the mean vector
             mean_vec = solver._mean
             self._record('mean', mean_vec)
@@ -270,22 +272,13 @@ class MonitorDLRCMAES:
             self._last_mean = mean_vec.copy()
 
             # Record the psi vector
-            psi_vec = solver._psi
-            self._record('psi', psi_vec)
+            self._record('psi', solver._psi)
 
             # Record the core vector
-            core_vec = solver._core
-            self._record('core', core_vec)
+            self._record('core', solver._core)
 
             # Record the singular values
-            svs = self._svs
-            self._record('cov_svs', svs)
-
-            # Record the covariance metrics
-            max_sv, min_sv = max(svs), min(svs)
-            self._record('cov_norm', norm(self._cov, ord=2).item())
-            self._record('cov_cn', (max_sv / (min_sv + 1e-12)).item())
-            self._record('cov_spectr_norm', max_sv.item())
+            self._record('cov_svs', self._svs)
 
     def __enter__(self):
         """Enter the runtime context and return the monitor object."""

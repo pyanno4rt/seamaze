@@ -83,7 +83,7 @@ with MonitorDLRCMAES(
         low_rank_init_dimension=None,
         low_rank_max_dimension=None,
         low_rank_is_adaptive=True,
-        low_rank_energy_tolerance=1e-3,
+        low_rank_energy_tolerance=1e-2,
         maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,
@@ -92,7 +92,7 @@ with MonitorDLRCMAES(
         sigma_threshold=1e-8,
         update_interval=None,
         min_log_level='debug',
-        callback=monitor.full,  # Enable full monitoring
+        callback=monitor.base,  # Enable basic monitoring
         random_state=42
         )
 
@@ -112,7 +112,6 @@ with MonitorDLRCMAES(
     plotter.show_sigma_path_norm = True
     plotter.show_cov_path_norm = True
     plotter.show_cov_svs = True
-    plotter.show_cov_norm = True
     plotter.show_cov_cn = True
     plotter.show_cov_spectr_norm = True
     plotter.show_integrator_rank = True

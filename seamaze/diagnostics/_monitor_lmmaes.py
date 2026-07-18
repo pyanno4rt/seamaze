@@ -64,8 +64,7 @@ class MonitorLMMAES:
         # Initialize the last mean vector
         self._last_mean = None
 
-        # Initialize the covariance matrix and singular values
-        self._cov = None
+        # Initialize the singular values
         self._svs = None
 
     @property
@@ -178,7 +177,7 @@ class MonitorLMMAES:
             optimal_value = solver._result['optimal_value'].item()
 
             # Reproduce the covariance matrix and singular values
-            self._cov = (
+            cov = (
                 eye(solver._number_of_variables, order='F', dtype=float64)
                 + solver._memory.T @ solver._memory
                 )
@@ -194,7 +193,7 @@ class MonitorLMMAES:
                     iteration=solver._opt_iter,
                     population=solver._population,
                     mean=solver._mean,
-                    cov=self._cov,
+                    cov=cov,
                     svs=self._svs,
                     sigma=solver._sigma,
                     fitness=fitness,
@@ -218,6 +217,17 @@ class MonitorLMMAES:
                 'mean_bound_viol', 0.0 if errors is None else mean(errors))
             self._record('gamma', solver._gamma)
 
+            # Record the sigma evolution path norm
+            self._record('path_sigma_norm', norm(solver._path_sigma).item())
+
+            # Record the step size
+            self._record('sigma', solver._sigma)
+
+            # Record the covariance metrics
+            max_sv, min_sv = max(self._svs), min(self._svs)
+            self._record('cov_cn', (max_sv / (min_sv + 1e-12)).item())
+            self._record('cov_spectr_norm', max_sv.item())
+
     def full(
             self,
             solver):
@@ -237,12 +247,6 @@ class MonitorLMMAES:
         # Check if the data should be updated
         if self._counter % self.interval == 0:
 
-            # Record the sigma evolution path norm
-            self._record('path_sigma_norm', norm(solver._path_sigma).item())
-
-            # Record the step size
-            self._record('sigma', solver._sigma)
-
             # Record the mean vector
             mean_vec = solver._mean
             self._record('mean', mean_vec)
@@ -251,14 +255,7 @@ class MonitorLMMAES:
             self._last_mean = mean_vec.copy()
 
             # Record the singular values
-            svs = self._svs
-            self._record('cov_svs', svs)
-
-            # Record the covariance metrics
-            max_sv, min_sv = max(svs), min(svs)
-            self._record('cov_norm', norm(self._cov, ord=2).item())
-            self._record('cov_cn', (max_sv / (min_sv + 1e-12)).item())
-            self._record('cov_spectr_norm', max_sv.item())
+            self._record('cov_svs', self._svs)
 
     def __enter__(self):
         """Enter the runtime context and return the monitor object."""

@@ -207,6 +207,18 @@ class MonitorCMAES:
                 'mean_bound_viol', 0.0 if errors is None else mean(errors))
             self._record('gamma', solver._gamma)
 
+            # Record the evolution path norms
+            self._record('path_sigma_norm', norm(solver._path_sigma).item())
+            self._record('path_cov_norm', norm(solver._path_cov).item())
+
+            # Record the step size
+            self._record('sigma', solver._sigma)
+
+            # Record the covariance metrics
+            max_sv, min_sv = max(solver._core), min(solver._core)
+            self._record('cov_cn', (max_sv / (min_sv + 1e-12)).item())
+            self._record('cov_spectr_norm', max_sv.item())
+
     def full(
             self,
             solver):
@@ -226,13 +238,6 @@ class MonitorCMAES:
         # Check if the data should be updated
         if self._counter % self.interval == 0:
 
-            # Record the evolution path norms
-            self._record('path_sigma_norm', norm(solver._path_sigma).item())
-            self._record('path_cov_norm', norm(solver._path_cov).item())
-
-            # Record the step size
-            self._record('sigma', solver._sigma)
-
             # Record the mean vector
             mean_vec = solver._mean
             self._record('mean', mean_vec)
@@ -241,14 +246,7 @@ class MonitorCMAES:
             self._last_mean = mean_vec.copy()
 
             # Record the singular values
-            svs = solver._core
-            self._record('cov_svs', svs)
-
-            # Record the covariance metrics
-            max_sv, min_sv = max(svs), min(svs)
-            self._record('cov_norm', norm(solver._cov, ord=2).item())
-            self._record('cov_cn', (max_sv / (min_sv + 1e-12)).item())
-            self._record('cov_spectr_norm', max_sv.item())
+            self._record('cov_svs', solver._core)
 
     def __enter__(self):
         """Enter the runtime context and return the monitor object."""

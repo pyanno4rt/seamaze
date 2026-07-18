@@ -63,7 +63,7 @@ class LMMAES:
     number_of_individuals : int, default=None
         Population size. Defaults to 4 + int(3*log(`number_of_variables`)).
 
-    initial_sigma : float, default=0.3
+    initial_sigma : float, default=1.0
         Initial step size.
 
     memory_size : int, default=None
@@ -113,7 +113,7 @@ class LMMAES:
             lower_variable_bounds=None,
             upper_variable_bounds=None,
             number_of_individuals=None,
-            initial_sigma=0.3,
+            initial_sigma=1.0,
             memory_size=None,
             maximum_iterations=100000,
             maximum_wall_time=43200,

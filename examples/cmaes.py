@@ -88,7 +88,7 @@ with MonitorCMAES(
         sigma_threshold=1e-8,
         update_interval=None,
         min_log_level='debug',
-        callback=monitor.full,  # Enable full monitoring
+        callback=monitor.base,  # Enable basic monitoring
         random_state=42
         )
 
@@ -108,7 +108,6 @@ with MonitorCMAES(
     plotter.show_sigma_path_norm = True
     plotter.show_cov_path_norm = True
     plotter.show_cov_svs = True
-    plotter.show_cov_norm = True
     plotter.show_cov_cn = True
     plotter.show_cov_spectr_norm = True
 

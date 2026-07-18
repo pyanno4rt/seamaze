@@ -9,14 +9,16 @@ Dynamical low-rank covariance matrix adaptation evolution strategy
 
 from signal import getsignal, SIGINT, signal
 from time import time
+import warnings
 
 from collections import deque
 from math import inf
 from numba import njit, types
+from numba.core.errors import NumbaPerformanceWarning
 from numpy import (
-    add, arange, argmin, argsort, array, asfortranarray, clip, diag, exp, eye,
-    float64, full, isinf, log, maximum, minimum, ptp, ones, outer, sqrt, where,
-    zeros)
+    add, arange, argmin, argsort, array, ascontiguousarray, asfortranarray,
+    clip, diag, exp, eye, float64, full, isinf, log, maximum, minimum, ptp,
+    ones, outer, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import any as nany
 from numpy import max as nmax
@@ -30,6 +32,10 @@ from numpy.random import default_rng, randn
 
 from seamaze.logging import Logging
 from seamaze.utils import make_compat
+
+# %% Disable numba warnings
+
+warnings.filterwarnings("ignore", category=NumbaPerformanceWarning)
 
 # %% Class definition
 
@@ -78,7 +84,7 @@ class DLRCMAES:
     number_of_individuals : int, default=None
         Population size. Defaults to 4 + int(3*log(`number_of_variables`)).
 
-    initial_sigma : float, default=0.3
+    initial_sigma : float, default=1.0
         Initial step size.
 
     low_rank_init_dimension : int, default=None
@@ -91,7 +97,7 @@ class DLRCMAES:
     low_rank_is_adaptive : bool, default=True
         Indicator for adaptive low-rank selection.
 
-    low_rank_energy_tolerance : float, default=1e-3
+    low_rank_energy_tolerance : float, default=1e-2
         Maximum fraction of discarded low-rank energy for rank truncation.
 
     maximum_iterations : int, default=100000
@@ -142,11 +148,11 @@ class DLRCMAES:
             lower_variable_bounds=None,
             upper_variable_bounds=None,
             number_of_individuals=None,
-            initial_sigma=0.3,
+            initial_sigma=1.0,
             low_rank_init_dimension=None,
             low_rank_max_dimension=None,
             low_rank_is_adaptive=True,
-            low_rank_energy_tolerance=1e-3,
+            low_rank_energy_tolerance=1e-2,
             maximum_iterations=100000,
             maximum_wall_time=43200,
             fitness_threshold=-inf,
@@ -324,7 +330,7 @@ class DLRCMAES:
         init_var = 1.0
         alpha = min(0.5, self.rank / self._number_of_variables)
         self._basis = eye(
-            self._number_of_variables, self.rank, order='F', dtype=float64
+            self._number_of_variables, self.rank, dtype=float64
             )
         self._core = (alpha * init_var) * ones(self.rank, dtype=float64)
 
@@ -563,12 +569,15 @@ class DLRCMAES:
         # Check if the low-rank factors should be updated
         if self._opt_iter % self._update_interval == 0:
 
+            # Get the steps sorted by fitness
+            steps_sorted = self._steps[argsort(fitness)]
+
             # Update the low-rank and noise factors
             basis_new, core_new, psi_new, rank_new = _adaptive_bug_step(
                 self._basis,
                 self._core,
                 self._psi,
-                self._steps[argsort(fitness)],
+                steps_sorted,
                 self._weights,
                 self._path_cov,
                 self._lr_cov,
@@ -578,7 +587,8 @@ class DLRCMAES:
                 self._low_rank_is_adaptive,
                 self._low_rank_energy_tolerance,
                 update_switch=update_switch,
-                force_expansion=self.check_rank_expansion()
+                force_expansion=self.check_rank_expansion(
+                    steps_sorted[:self._elite_size, :])
                 )
 
             # Save the factor states
@@ -699,9 +709,16 @@ class DLRCMAES:
 
         return self._result
 
-    def check_rank_expansion(self):
+    def check_rank_expansion(
+            self,
+            elite_steps):
         """
         Check the evolutionary-state rank expansion criteria.
+
+        Parameters
+        ----------
+        elite_steps : ndarray
+            Elite sample steps.
 
         Returns
         -------
@@ -716,33 +733,70 @@ class DLRCMAES:
 
         # Initialize the expansion pressure flags
         path_pressure = False
+        steps_pressure = False
         fitness_pressure = False
 
         # Initialize the expansion reasons
         reasons = []
 
         # Get the expected path energy fraction from a random subspace
-        expected_explained_ratio = self.rank / self._number_of_variables
-
-        # Calculate the explained path energy fraction
-        path_norm_sq = norm(self._path_cov)**2 + 1e-15
-        path_cov_proj = self._basis.T @ self._path_cov
-        path_explained_ratio = norm(path_cov_proj)**2 / path_norm_sq
-
-        # Calculate the path underrepresentation
-        path_underrepresentation = (
-            (expected_explained_ratio - path_explained_ratio)
-            / (expected_explained_ratio + 1e-15)
+        expected_explained_ratio = max(
+            self.rank / self._number_of_variables, 1e-6
             )
 
-        # Check if the underrepresentation is larger than 50%
-        if path_underrepresentation > 0.5:
+        # Project the evolution path into the current low-rank subspace
+        path_cov_coords = self._basis.T @ self._path_cov
+
+        # Calculate the explained and total path energy
+        path_explained_energy = norm(path_cov_coords)**2
+        path_total_energy = norm(self._path_cov)**2
+
+        # Calculate the explained path energy fraction
+        path_explained_ratio = (
+            path_explained_energy / (path_total_energy + 1e-15)
+            )
+
+        # Compare against the expected explained fraction of a random subspace
+        path_ratio = path_explained_ratio / (expected_explained_ratio + 1e-15)
+
+        # Check if the fraction is smaller than 50%
+        if path_ratio < 0.5:
 
             # Set the path pressure flag
             path_pressure = True
 
             # Add the expansion reason
             reasons.append('path_excess_residual')
+
+        # Project elite steps into the current low-rank subspace
+        elite_coords = elite_steps @ self._basis
+
+        # Calculate weighted explained and total elite step energies
+        elite_explained_energy = nsum(
+            self._weights * nsum(elite_coords * elite_coords, axis=1)
+            )
+        elite_total_energy = nsum(
+            self._weights * nsum(elite_steps * elite_steps, axis=1)
+            )
+
+        # Calculate the explained elite step energy fraction
+        elite_explained_ratio = (
+            elite_explained_energy / (elite_total_energy + 1e-15)
+            )
+
+        # Compare against the expected explained fraction of a random subspace
+        elite_ratio = (
+            elite_explained_ratio / (expected_explained_ratio + 1e-15)
+            )
+
+        # Check if the ratio is small
+        if elite_ratio < 0.5:
+
+            # Set the steps pressure flag
+            steps_pressure = True
+
+            # Add the expansion reason
+            reasons.append('steps_excess_residual')
 
         # Check if the fitness history has been completely filled
         if len(self._fitness_history) == self._fitness_history.maxlen:
@@ -757,8 +811,12 @@ class DLRCMAES:
             fit_old = nmean(history[:half])
             fit_new = nmean(history[half:])
 
-            # Check if the relative improvement is very small
-            if abs(fit_old - fit_new) / max(abs(fit_old), 1.0) < 1e-3:
+            # Compute the logarithmized fitness values
+            log_old = log(abs(fit_old) + 1e-12)
+            log_new = log(abs(fit_new) + 1e-12)
+
+            # Check if the relative improvement is small
+            if log_old-log_new < 1e-3:
 
                 # Set the fitness pressure flag
                 fitness_pressure = True
@@ -784,7 +842,7 @@ class DLRCMAES:
         # Update the current expansion reasons
         self._current_expansion_reasons = reasons
 
-        return path_pressure and fitness_pressure
+        return (path_pressure + steps_pressure + fitness_pressure) >= 2
 
     def check_termination(self):
         """
@@ -882,8 +940,6 @@ class DLRCMAES:
 
 # Set the variable types
 f8_2d = types.float64[:, :]
-f8_2d_f = types.float64[::1, :]
-f8_2d_c = types.float64[:, ::1]
 f8_1d = types.float64[:]
 i8_1d = types.int64[:]
 f8 = types.float64
@@ -893,7 +949,7 @@ bo = types.bool_
 @njit(
     types.Tuple((f8, f8))(
         # Return: Tuple(max_eval, min_eval)
-        f8_2d_f,        # basis
+        f8_2d,          # basis
         f8_1d,          # core
         f8_1d,          # psi
         ),
@@ -953,7 +1009,7 @@ def _approx_spectrum_extremes(basis, core, psi):
     f8_1d(
         # Return: approximation
         f8_1d,          # elite_mean_step
-        f8_2d_f,        # basis
+        f8_2d,          # basis
         f8_1d,          # core
         f8_1d,          # psi
         ),
@@ -1075,7 +1131,7 @@ def _lanczos_matrix_inverse_sqrt_product(elite_mean_step, basis, core, psi):
         f8_1d,          # fitness
         f8_2d,          # steps
         f8_2d,          # weights
-        f8_2d_f,        # basis
+        f8_2d,          # basis
         f8_1d,          # core
         f8_1d,          # psi
         f8_1d,          # path_sigma
@@ -1173,11 +1229,8 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
     # Loop over the eigenvalues
     for index in range(eigenvalues.size):
 
-        # Check if the eigenvalue is positive
-        if eigenvalues[index] > 0.0:
-
-            # Cumulate the total energy
-            total_energy += eigenvalues[index]
+        # Cumulate the total energy
+        total_energy += eigenvalues[index]**2
 
     # Check if the total energy is very small
     if total_energy <= 1e-15:
@@ -1191,11 +1244,8 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
     # Loop over the eigenvalues
     for index in range(eigenvalues.size):
 
-        # Check if the eigenvalue is positive
-        if eigenvalues[index] > 0.0:
-
-            # Cumulate the energy
-            cumulative += eigenvalues[index]
+        # Cumulate the energy
+        cumulative += eigenvalues[index]**2
 
         # Check if the cumulated energy exceeds the requested fraction
         if cumulative >= energy_fraction * total_energy:
@@ -1232,6 +1282,10 @@ def _adaptive_bug_step(
     low_rank_energy_tolerance, update_switch, force_expansion):
     """Perform an update step of the adaptive BUG integrator."""
 
+    # Ensure array layouts
+    basis = asfortranarray(basis)
+    steps_sorted = ascontiguousarray(steps_sorted)
+
     # Get the dimension and rank
     dim, rank = basis.shape
 
@@ -1245,7 +1299,6 @@ def _adaptive_bug_step(
 
     # Copy and flatten the weights
     weights_sorted = weights.ravel().copy()
-    weights_sorted_2d = weights_sorted.reshape((-1, 1))
 
     # Transform the steps for negative-weight stabilization
     steps_sorted_tr = steps_sorted @ basis
@@ -1271,6 +1324,9 @@ def _adaptive_bug_step(
 
         # Rescale the weights to guarantee positive definiteness
         weights_sorted[neg_indices] *= minimum(1.0, factors)
+
+    # Get the weights as a 2D array
+    weights_sorted_2d = weights_sorted.reshape((-1, 1))
 
     # Get the adjusted rank-1 learning rate
     lr_rank_one_adj = (
@@ -1359,13 +1415,9 @@ def _adaptive_bug_step(
     sigma, basis_sigma = eigh(shat)
 
     # Sort the eigenvalues and -vectors
-    idx = argsort(sigma)[::-1]
+    idx = argsort(nabs(sigma))[::-1]
     sigma = sigma[idx]
     basis_sigma = basis_sigma[:, idx]
-
-    # Apply lower threshold to the eigenvalues
-    threshold = max(1e-12, abs(sigma[0]) / 1e12)
-    sigma_safe = maximum(sigma, threshold)
 
     # Check if the rank should be adapted
     if low_rank_is_adaptive:
@@ -1383,8 +1435,7 @@ def _adaptive_bug_step(
 
             # Determine rank from retained covariance energy
             rank_energy = _energy_rank_selection(
-                sigma_safe, energy_fraction=1-low_rank_energy_tolerance,
-                min_rank=2
+                sigma, energy_fraction=1-low_rank_energy_tolerance, min_rank=1
                 )
 
             # Check if the proposed rank is smaller
@@ -1401,18 +1452,22 @@ def _adaptive_bug_step(
 
         # Clip the rank to the minimum/maximum allowed rank
         rank_new = rank + rank_delta
-        rank_new = max(2, min(rank_new, low_rank_max_dimension))
+        rank_new = max(1, min(rank_new, low_rank_max_dimension))
 
     else:
 
         # Fix the rank
         rank_new = min(rank, low_rank_max_dimension)
 
-    # Truncate to the new rank
-    basis_new = uhat_aug @ basis_sigma[:, :rank_new]
-    core_new = sigma_safe[:rank_new]
+    # Project the eigenvalues onto the positive cone
+    threshold = max(1e-12, nabs(sigma[0]) / 1e12)
+    sigma_psd = maximum(sigma, threshold)
 
-    # Ensure that the basis remains a Fortran array
-    basis_new = asfortranarray(basis_new)
+    # Keep eigenvector ordering
+    basis_sigma_psd = basis_sigma
+
+    # Truncate to the new rank
+    basis_new = uhat_aug @ basis_sigma_psd[:, :rank_new]
+    core_new = sigma_psd[:rank_new]
 
     return basis_new, core_new, psi_new, rank_new
