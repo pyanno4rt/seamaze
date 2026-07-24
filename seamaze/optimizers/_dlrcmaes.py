@@ -59,7 +59,7 @@ class DLRCMAES:
         C = diag(psi) + USU^T,
 
     where psi captures marginal variances and USU^T models off-diagonal
-    dependencies only, satisfying diag(USU^T) = 0.
+    dependencies only, satisfying diag(USU^T) ≈ 0.
 
     Parameters
     ----------
@@ -773,10 +773,12 @@ class DLRCMAES:
 
         # Calculate weighted explained and total elite step energies
         elite_explained_energy = nsum(
-            self._weights * nsum(elite_coords * elite_coords, axis=1)
+            self._weights[:self._elite_size]
+            * nsum(elite_coords * elite_coords, axis=1)
             )
         elite_total_energy = nsum(
-            self._weights * nsum(elite_steps * elite_steps, axis=1)
+            self._weights[:self._elite_size]
+            * nsum(elite_steps * elite_steps, axis=1)
             )
 
         # Calculate the explained elite step energy fraction

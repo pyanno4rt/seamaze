@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 title: "seamaze: a python library for classical, limited-memory, and dynamical low-rank covariance matrix adaptation evolution strategy"
 message: "If you use seamaze in your work, let us now and cite this repository as below."
-version: 0.0.8
+version: 0.0.9
 type: software
 authors:
   - given-names: "Tim"
@@ -22,6 +22,6 @@ keywords:
   - cma-es
   - dynamical-low-rank
 license: MIT
-date-released: 2026-07-09
+date-released: 2026-07-24
 repository-code: "http://github.com/pyanno4rt/seamaze"
 url: "http://github.com/pyanno4rt/seamaze"
