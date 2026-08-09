@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "seamaze"
-version = "0.0.9"
+version = "0.0.10"
 description = "A python library for classical, limited-memory, and dynamical low-rank covariance matrix adaptation evolution strategy."
 license = "MIT"
 authors = [ "Tim Ortkamp <tim.ortkamp@gmx.de>" ]
@@ -43,7 +43,7 @@ pytest-cov = ">=7.1.0"
 coveralls = ">=4.1.0"
 
 [tool.poetry.group.dev-local.dependencies]
-spyder = ">=6.1.5"
+spyder = ">=6.1.6"
 
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/pyanno4rt/seamaze/issues"

@@ -1280,20 +1280,25 @@ class Visualizer:
         self.svs_val_95.set_text(f"{pcs_95} PCs")
         self.svs_val_99.set_text(f"{pcs_99} PCs")
 
-        # Get the global minimum rank
+        # Get the global minimum and maximum rank
         global_min_rank = min(
             [min(self._svs_hist_80), min(self._svs_hist_95),
              min(self._svs_hist_99)]
             )
+        global_max_rank = max(
+            [max(self._svs_hist_80), max(self._svs_hist_95),
+             max(self._svs_hist_99)]
+            )
 
         # Derive the minimum on the y-axis
         y_lim_min = max(1, global_min_rank)
+        y_lim_max = min(self.dimensions, global_max_rank)
 
         # Set the limits on the y-axis
-        self.ax_svs.set_ylim(y_lim_min, self.dimensions)
+        self.ax_svs.set_ylim(y_lim_min, y_lim_max)
 
         # Get the ticks for the y-axis
-        raw_y_ticks = linspace(y_lim_min, self.dimensions, 6)
+        raw_y_ticks = linspace(y_lim_min, y_lim_max, 6)
         clean_y_ticks = unique(raw_y_ticks.round().astype(int)).tolist()
 
         # Set formatter and locator for the y-axis

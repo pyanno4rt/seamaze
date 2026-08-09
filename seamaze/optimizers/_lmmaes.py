@@ -230,7 +230,7 @@ class LMMAES:
             )
 
         # Initialize the bound/constraint handling parameters
-        self._squared_bound_errors = None
+        self._mean_squared_bound_errors = None
         self._gamma = None
 
         # Initialize the adaptive state variables, arrays, and matrices
@@ -333,10 +333,35 @@ class LMMAES:
                 0.0, self._population - self.upper_variable_bounds
                 )
 
-            # Sum the squared errors for each individual
-            self._squared_bound_errors = nsum(
-                (eps_lower + eps_upper) ** 2, axis=1
+            # Compute the total bound violation
+            bound_errors = eps_lower + eps_upper
+
+            # Average the squared errors for each individual
+            self._mean_squared_bound_errors = nmean(bound_errors ** 2, axis=1)
+
+            # Compute the relative severity of bound violations
+            bound_errors_squared = bound_errors ** 2
+            steps_squared = (self._sigma * self._steps) ** 2
+
+            violation_severity = nmean(
+                nsum(bound_errors_squared, axis=1) /
+                (nsum(bound_errors_squared, axis=1) +
+                 nsum(steps_squared, axis=1) +
+                 1e-15
+                 )
                 )
+
+            # Check if the penalty factor has been initialized
+            if self._gamma is not None:
+
+                # Compute the gamma factor
+                gamma_factor = (
+                    1.01 ** violation_severity *
+                    0.99 ** (1.0 - violation_severity)
+                    )
+
+                # Adapt the penalty factor
+                self._gamma = clip(self._gamma * gamma_factor, 1e-5, 1e10)
 
             # Mirror the violating individuals back into the feasible region
             self._population[:] = where(
@@ -376,7 +401,7 @@ class LMMAES:
         # Check if the decision variables are bounded
         if self._is_bound:
 
-            # Check if the penalty factor has been initialized
+            # Check if the penalty factor has not been initialized
             if self._gamma is None:
 
                 # Compute the unpenalized fitness range
@@ -384,27 +409,12 @@ class LMMAES:
 
                 # Scale the penalty factor to the fitness range
                 self._gamma = (
-                    (fitness_range if fitness_range > 1e-8 else 10.0) /
-                    (self._number_of_variables + 1e-15)
+                    fitness_range if fitness_range > 1e-8 else 1.0
                     )
-
-            # Check if any bound violations occurred
-            if nany(self._squared_bound_errors > 0):
-
-                # Set the gamma factor > 1
-                gamma_factor = 1.1
-
-            else:
-
-                # Set the gamma factor < 1
-                gamma_factor = 0.99
-
-            # Adapt the penalty factor
-            self._gamma = clip(self._gamma * gamma_factor, 1e-5, 1e10)
 
             # Compute the penalized fitness values
             selection_fitness = (
-                true_fitness + self._gamma * self._squared_bound_errors
+                true_fitness + self._gamma * self._mean_squared_bound_errors
                 )
 
         else:

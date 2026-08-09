@@ -101,7 +101,7 @@ with MonitorDLRCMAES(
 
     # Initialize the result plotter (optional)
     plotter = ResultPlotter(
-        data=monitor.data, label=problem.name, save_folder=None)
+        data=monitor.data, label=f'{problem.name}-{ndim}D', save_folder=None)
 
     # Select the plots
     plotter.show_objective = True

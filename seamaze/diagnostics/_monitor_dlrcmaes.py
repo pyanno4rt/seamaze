@@ -177,7 +177,7 @@ class MonitorDLRCMAES:
         if self._counter % self.interval == 0:
 
             # Pre-store solver variables
-            errors = solver._squared_bound_errors
+            errors = solver._mean_squared_bound_errors
             fitness = solver._fitness
             optimal_value = solver._result['optimal_value'].item()
 

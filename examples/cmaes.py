@@ -97,12 +97,12 @@ with MonitorCMAES(
 
     # Initialize the result plotter
     plotter = ResultPlotter(
-        data=monitor.data, label=problem.name, save_folder=None)
+        data=monitor.data, label=f'{problem.name}-{ndim}D', save_folder=None)
 
     # Select the plots
     plotter.show_objective = True
     plotter.show_fitness = True
-    plotter.show_bound_viol = True
+    plotter.show_bound_viol = False
     plotter.show_step_size = True
     plotter.show_mean_change_norm = True
     plotter.show_sigma_path_norm = True
