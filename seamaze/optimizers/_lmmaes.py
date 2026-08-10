@@ -349,29 +349,32 @@ class LMMAES:
                  nsum(steps_squared, axis=1) +
                  1e-15
                  )
-                )
+                ) ** 2
 
             # Check if the penalty factor has been initialized
             if self._gamma is not None:
 
                 # Compute the gamma factor
                 gamma_factor = (
-                    1.01 ** violation_severity *
-                    0.99 ** (1.0 - violation_severity)
+                    1.001 ** violation_severity *
+                    0.999 ** (1.0 - violation_severity)
                     )
 
                 # Adapt the penalty factor
                 self._gamma = clip(self._gamma * gamma_factor, 1e-5, 1e10)
 
+            # Get the relative step size
+            sigma_rel = self._sigma / (1 + self._sigma)
+
             # Mirror the violating individuals back into the feasible region
             self._population[:] = where(
                 self._population < self.lower_variable_bounds,
-                self.lower_variable_bounds + eps_lower,
+                self.lower_variable_bounds + sigma_rel * eps_lower,
                 self._population
                 )
             self._population[:] = where(
                 self._population > self.upper_variable_bounds,
-                self.upper_variable_bounds - eps_upper,
+                self.upper_variable_bounds - sigma_rel * eps_upper,
                 self._population
                 )
 
