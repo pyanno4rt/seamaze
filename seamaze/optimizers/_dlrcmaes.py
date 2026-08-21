@@ -1414,10 +1414,16 @@ def _adaptive_bug_step(
 
         else:
 
+            #
+            shat_off = shat - diag(diag(shat))
+            sigma_off, _ = eigh(shat_off)
+            idx = argsort(nabs(sigma_off))[::-1]
+            sigma_off = sigma_off[idx]
+
             # Determine rank from retained covariance energy
             rank_energy = _energy_rank_selection(
-                sigma_safe, energy_fraction=1-low_rank_energy_tolerance,
-                min_rank=2
+                sigma_off, energy_fraction=1-low_rank_energy_tolerance,
+                min_rank=1
                 )
 
             # Check if the proposed rank is smaller
@@ -1434,7 +1440,7 @@ def _adaptive_bug_step(
 
         # Clip the rank to the minimum/maximum allowed rank
         rank_new = rank + rank_delta
-        rank_new = max(2, min(rank_new, low_rank_max_dimension))
+        rank_new = max(1, min(rank_new, low_rank_max_dimension))
 
     else:
 
@@ -1443,7 +1449,7 @@ def _adaptive_bug_step(
 
     # Truncate to the new rank
     basis_new = uhat_aug @ basis_sigma[:, :rank_new]
-    core_new = sigma_safe[:rank_new]
+    core_new = sigma[:rank_new]
 
     # Ensure that the basis remains a Fortran array
     basis_new = asfortranarray(basis_new)

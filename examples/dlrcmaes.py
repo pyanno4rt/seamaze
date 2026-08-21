@@ -40,10 +40,10 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Sphere'
+name = 'Rotated Ellipsoid'
 
 # Enter the problem dimensionality
-ndim = 10
+ndim = 30
 
 # Get the benchmark function class
 problems = {
@@ -78,13 +78,13 @@ with MonitorDLRCMAES(
         # gradient=problem.gradient,
         # lower_variable_bounds=array(problem.bounds[0]),
         # upper_variable_bounds=array(problem.bounds[1]),
-        number_of_individuals=None,
+        number_of_individuals=50,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        low_rank_init_dimension=problem.ndim/2,
+        low_rank_init_dimension=None,
         low_rank_max_dimension=None,
         low_rank_is_adaptive=True,
         low_rank_energy_tolerance=1e-3,
-        low_rank_psi_coupling = True,
+        low_rank_psi_coupling = False,
         maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,
