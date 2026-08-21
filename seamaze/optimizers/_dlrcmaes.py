@@ -47,14 +47,6 @@ class DLRCMAES:
         computationally efficient large-scale constrained optimization.
         (unpublished).
 
-    Here, the covariance matrix is represented as a sum of a diagonal variance
-    component and a diagonally-free low-rank correlation component:
-
-        C = diag(psi) + USU^T,
-
-    where psi captures marginal variances and USU^T models off-diagonal
-    dependencies only, satisfying diag(USU^T) = 0.
-
     Parameters
     ----------
     number_of_variables : int
@@ -93,6 +85,17 @@ class DLRCMAES:
 
     low_rank_energy_tolerance : float, default=1e-3
         Maximum fraction of discarded low-rank energy for rank truncation.
+
+    low_rank_psi_coupling : bool, default=True
+        Indicator for the coupled growth-field correction to the psi
+        (diagonal) update. If True, the growth field's component that is
+        orthogonal to the current low-rank basis is routed directly to psi
+        rather than fed to the K/S-step, so the low-rank part is not spent
+        on content it cannot represent (one-gradient-step approximation of
+        Bonnabel et al., 2024, Eq. 26, R-independent, no matrix inversion).
+        If False, falls back to the simpler two-stage scheme: the full
+        growth field is fed to the K/S-step and psi absorbs only the
+        after-the-fact residual. 
 
     maximum_iterations : int, default=100000
         Maximum number of generations (iterations) to run before stopping.
@@ -147,6 +150,7 @@ class DLRCMAES:
             low_rank_max_dimension=None,
             low_rank_is_adaptive=True,
             low_rank_energy_tolerance=1e-3,
+            low_rank_psi_coupling=True,
             maximum_iterations=100000,
             maximum_wall_time=43200,
             fitness_threshold=-inf,
@@ -263,7 +267,7 @@ class DLRCMAES:
         self._low_rank_max_dimension = (
             self._number_of_variables
             if low_rank_max_dimension is None
-            else min(low_rank_max_dimension, self._number_of_variables)
+            else int(min(low_rank_max_dimension, self._number_of_variables))
             )
 
         self._low_rank_init_dimension = (
@@ -271,14 +275,15 @@ class DLRCMAES:
             if low_rank_init_dimension is None
             else low_rank_init_dimension
             )
-        self._low_rank_init_dimension = min(
+        self._low_rank_init_dimension = int(min(
             max(1, self._low_rank_init_dimension),
             self._number_of_variables,
             self._low_rank_max_dimension,
-            )
+            ))
 
         self._low_rank_is_adaptive = low_rank_is_adaptive
         self._low_rank_energy_tolerance = low_rank_energy_tolerance
+        self._low_rank_psi_coupling = low_rank_psi_coupling
 
         # Determine the integrator rank
         self.rank = self._low_rank_init_dimension
@@ -328,10 +333,10 @@ class DLRCMAES:
             )
         self._core = (alpha * init_var) * ones(self.rank, dtype=float64)
 
-        # Allocate variance not captured by low-rank basis to psi directly
-        low_rank_diag = diag(self._basis @ self._core @ self._basis.T)
+        # Allocate variance not captured by the low-rank basis to psi
+        low_rank_diag = nsum(self._basis**2 * self._core, axis=1)
         self._psi = maximum(
-            0.0, init_var - low_rank_diag
+            1e-12, init_var - low_rank_diag
             ).astype(float64)
 
         # Initialize the stopping criteria and tracking variables
@@ -580,6 +585,7 @@ class DLRCMAES:
                 self._low_rank_max_dimension,
                 self._low_rank_is_adaptive,
                 self._low_rank_energy_tolerance,
+                self._low_rank_psi_coupling,
                 update_switch=update_switch,
                 force_expansion=self.check_rank_expansion()
                 )
@@ -1224,6 +1230,7 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
         i8,             # low_rank_max_dimension
         bo,             # low_rank_is_adaptive
         f8,             # low_rank_energy_tolerance
+        bo,             # low_rank_psi_coupling
         f8,             # update_switch
         bo              # force_expansion
         ),
@@ -1232,7 +1239,8 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
 def _adaptive_bug_step(
     basis, core, psi, steps_sorted, weights, path_cov, lr_cov, lr_rank_one,
     lr_rank_mu, low_rank_max_dimension, low_rank_is_adaptive,
-    low_rank_energy_tolerance, update_switch, force_expansion):
+    low_rank_energy_tolerance, low_rank_psi_coupling, update_switch,
+    force_expansion):
     """Perform an update step of the adaptive BUG integrator."""
 
     # Get the dimension and rank
@@ -1283,29 +1291,47 @@ def _adaptive_bug_step(
     # Get the decay rate
     lr_decay = lr_rank_one + lr_rank_mu - lr_rank_one_adj
 
-    # Compute the diagonal-free rank-one update
+    # Compute the rank-one update (K-step, projected onto the old basis)
     rank_one_diag = path_cov ** 2
-    rank_one_term_u = (
-        path_cov[:, None] * (path_cov @ basis)
-        - rank_one_diag[:, None] * basis
-        )
+    rank_one_term_u = path_cov[:, None] * (path_cov @ basis)
 
-    # Compute the diagonal-free rank-mu update
+    # Compute the rank-mu update (K-step, projected onto the old basis)
     rank_mu_diag = nsum(weights_sorted_2d * steps_sorted**2, axis=0)
     steps_basis = steps_sorted @ basis
-    rank_mu_term_u = (
-        steps_sorted.T @ (weights_sorted_2d * steps_basis)
-        - rank_mu_diag[:, None] * basis
-        )
+    rank_mu_term_u = steps_sorted.T @ (weights_sorted_2d * steps_basis)
 
-    # Determine the variance (diagonal) of the growth field
+    # Determine the diagonal target implied by the full covariance ODE, i.e.
+    # what a pure (full-rank) diagonal CMA-ES-like update would give. This
+    # decays the *full* old diagonal diag(C) = psi + diag(old low-rank part),
+    # not just psi, since the low-rank part is no longer diagonal-free and
+    # may itself carry substantial diagonal content
+    old_low_rank_diag = nsum(basis * basis_core, axis=1)
     growth_var = clip(
-        lr_rank_one * rank_one_diag + lr_rank_mu * rank_mu_diag, -0.1 * psi,
+        lr_rank_one * rank_one_diag + lr_rank_mu * rank_mu_diag,
+        -0.1 * (psi + old_low_rank_diag),
         None
         )
+    psi_target = maximum(
+        1e-12, (1.0 - lr_decay) * (psi + old_low_rank_diag) + growth_var
+        )
 
-    # Update psi with the growth field variance
-    psi_new = maximum(1e-12, (1.0 - lr_decay) * psi + growth_var)
+    # Bonnabel et al. 2024, Eq. 26/30's coupled psi correction,
+    # truncated to one gradient step at psi=0
+    # with low_rank_psi_coupling=False, this is skipped and the update
+    # falls back to the simpler two-stage/residuum scheme
+    if low_rank_psi_coupling:
+
+        pc_perp = path_cov - basis @ (path_cov @ basis)
+        steps_perp = steps_sorted - steps_sorted_tr @ basis_tr
+        delta_psi_growth = maximum(
+            0.0,
+            lr_rank_one * pc_perp**2
+            + lr_rank_mu * nsum(weights_sorted_2d * steps_perp**2, axis=0)
+            )
+
+    else:
+
+        delta_psi_growth = zeros(dim, dtype=float64)
 
     # Set the initial state for the K-slice
     k_slice_init = basis_core
@@ -1314,6 +1340,7 @@ def _adaptive_bug_step(
     k_slice = (
         + lr_rank_one * rank_one_term_u
         + lr_rank_mu * rank_mu_term_u
+        - delta_psi_growth[:, None] * basis
         + (1.0 - lr_decay) * k_slice_init
         )
 
@@ -1333,22 +1360,25 @@ def _adaptive_bug_step(
     # Project the existing low-rank covariance into the augmented subspace
     proj = uhat_aug_tr @ basis
     ext_s = (proj * core) @ proj.T
-    ext_s -= diag(diag(ext_s))
 
-    # Compute the diagonal-free rank-one update in the augmented space
+    # Compute the rank-one update in the augmented space
     path_cov_aug = uhat_aug_tr @ path_cov
     rank_one_term_s = outer(path_cov_aug, path_cov_aug)
-    rank_one_term_s -= diag(diag(rank_one_term_s))
 
-    # Compute the diagonal-free rank-mu update in the augmented space
+    # Compute the rank-mu update in the augmented space
     steps_aug_tr = steps_sorted @ uhat_aug
     rank_mu_term_s = steps_aug_tr.T @ (weights_sorted_2d * steps_aug_tr)
-    rank_mu_term_s -= diag(diag(rank_mu_term_s))
+
+    # Project the same U-invisible diagonal correction into the augmented
+    # subspace, so the S-step sees the same "cleaned" growth field as the
+    # K-step above
+    delta_psi_growth_s = uhat_aug_tr @ (delta_psi_growth[:, None] * uhat_aug)
 
     # Assemble the low-rank correlation velocity field
     f_core = (
         + lr_rank_one * rank_one_term_s
         + lr_rank_mu * rank_mu_term_s
+        - delta_psi_growth_s
         - lr_decay * ext_s
         )
 
@@ -1417,5 +1447,10 @@ def _adaptive_bug_step(
 
     # Ensure that the basis remains a Fortran array
     basis_new = asfortranarray(basis_new)
+
+    # Allocate only the residual variance not already captured by the
+    # updated low-rank part to psi
+    low_rank_diag_new = nsum(basis_new**2 * core_new, axis=1)
+    psi_new = maximum(1e-12, psi_target - low_rank_diag_new)
 
     return basis_new, core_new, psi_new, rank_new

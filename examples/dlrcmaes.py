@@ -43,7 +43,7 @@ Available benchmark functions are:
 name = 'Sphere'
 
 # Enter the problem dimensionality
-ndim = 20
+ndim = 10
 
 # Get the benchmark function class
 problems = {
@@ -80,10 +80,11 @@ with MonitorDLRCMAES(
         # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        low_rank_init_dimension=None,
+        low_rank_init_dimension=problem.ndim/2,
         low_rank_max_dimension=None,
         low_rank_is_adaptive=True,
         low_rank_energy_tolerance=1e-3,
+        low_rank_psi_coupling = True,
         maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,
@@ -99,23 +100,23 @@ with MonitorDLRCMAES(
     # Optimize the decision variables
     result = solver.optimize(array([3.0]*problem.ndim))
 
-    # Initialize the result plotter (optional)
+    # # Initialize the result plotter (optional)
     plotter = ResultPlotter(
         data=monitor.data, label=problem.name, save_folder=None)
 
-    # Select the plots
-    plotter.show_objective = True
-    plotter.show_fitness = True
+    # # Select the plots
+    plotter.show_objective = False
+    plotter.show_fitness = False
     plotter.show_bound_viol = False
-    plotter.show_step_size = True
-    plotter.show_mean_change_norm = True
-    plotter.show_sigma_path_norm = True
-    plotter.show_cov_path_norm = True
-    plotter.show_cov_svs = True
-    plotter.show_cov_norm = True
+    plotter.show_step_size = False
+    plotter.show_mean_change_norm = False
+    plotter.show_sigma_path_norm = False
+    plotter.show_cov_path_norm = False
+    plotter.show_cov_svs = False
+    plotter.show_cov_norm = False
     plotter.show_cov_cn = True
     plotter.show_cov_spectr_norm = True
     plotter.show_integrator_rank = True
 
     # Plot all selected results
-    # plotter.plot_all()
+    plotter.plot_all()
