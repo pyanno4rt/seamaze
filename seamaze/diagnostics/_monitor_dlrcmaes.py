@@ -187,11 +187,12 @@ class MonitorDLRCMAES:
             cov[1, 1] += solver._psi[1]
 
             # Reconstruct the singular values
-            psi_projected = (solver._basis.T * solver._psi) @ solver._basis
-            reduced_matrix = psi_projected.copy()
-            reduced_matrix[diag_indices_from(reduced_matrix)] += solver._core
-            dominant_svs = eigvalsh(reduced_matrix)
-            self._svs = dominant_svs[::-1]
+            # psi_projected = (solver._basis.T * solver._psi) @ solver._basis
+            # reduced_matrix = psi_projected.copy()
+            # reduced_matrix[diag_indices_from(reduced_matrix)] += solver._core
+            # dominant_svs = eigvalsh(reduced_matrix)
+            # self._svs = dominant_svs[::-1]
+            self._svs = solver._core
 
             # Check if the interactive plot should be updated
             if self.visualizer:

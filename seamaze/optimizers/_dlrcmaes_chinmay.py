@@ -17,8 +17,8 @@ from numba import njit, types
 from numba.core.errors import NumbaPerformanceWarning
 from numpy import (
     add, arange, argmin, argsort, array, ascontiguousarray, asfortranarray,
-    ceil, clip, diag, exp, eye, float64, full, isinf, log, maximum, minimum,
-    ptp, ones, outer, sqrt, where, zeros)
+    clip, diag, exp, eye, float64, full, isinf, log, maximum, minimum, ptp,
+    ones, outer, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import max as nmax
 from numpy import mean as nmean
@@ -50,14 +50,15 @@ class DLRCMAES:
         Ortkamp, T., Patwardhan, C. and Stammer, P. (2026). A dynamical
         low-rank covariance matrix adaptation hybrid evolution strategy for
         computationally efficient large-scale constrained optimization.
+        (unpublished).
 
-    Here, the covariance matrix is represented as a sum of a low-rank component
-    and a residual-variance component:
+    Here, the covariance matrix is represented as a sum of a diagonal variance
+    component and a diagonally-free low-rank correlation component:
 
-        C = USU^T + diag(psi),
+        C = diag(psi) + USU^T,
 
-    where USU^T captures the learned dependency structure, while psi accounts
-    for residual marginal variances.
+    where psi captures marginal variances and USU^T models off-diagonal
+    dependencies only, satisfying diag(USU^T) ≈ 0.
 
     Parameters
     ----------
@@ -123,12 +124,8 @@ class DLRCMAES:
     update_interval : int, default=None
         Frequency of the covariance update (in generations). Larger values
         (e.g. 10) can significantly speed up the algorithm for
-        high-dimensional problems. Defaults to
-
-            ceil(sqrt(rank/(n*lr_cov))),
-
-        where `rank` is the current low-rank dimension, `n` is the problem
-        dimension, and `lr_cov` is the covariance learning rate.
+        high-dimensional problems. Defaults to int(µ_eff + 1), where µ_eff is
+        the variance effective selection mass.
 
     min_log_level : {'debug', 'info', 'warning', 'error', 'critical'}, \
         default='debug'
@@ -266,7 +263,7 @@ class DLRCMAES:
             ).reshape(-1, 1)
 
         # Get the low-rank adaptivity parameters
-        default_rank = 4 + int(3 * log(self._number_of_variables))
+        default_rank = 4 + int(3 * log(self._number_of_variables)) # int(self._number_of_variables/4) #
 
         self._low_rank_max_dimension = (
             self._number_of_variables
@@ -329,15 +326,14 @@ class DLRCMAES:
         self._path_cov = zeros(self._number_of_variables, dtype=float64)
         self._mean = zeros(self._number_of_variables, dtype=float64)
 
-        psi_floor = 0.0
         init_var = 1.0
-        alpha = 1.0 - psi_floor / init_var
+        alpha = min(0.5, self.rank / self._number_of_variables)
         self._basis = eye(
             self._number_of_variables, self.rank, dtype=float64
             )
         self._core = (alpha * init_var) * ones(self.rank, dtype=float64)
 
-        self._psi = ones(self._number_of_variables, dtype=float64)
+        self._psi = init_var * ones(self._number_of_variables, dtype=float64)
         self._psi[:self.rank] *= (1.0 - alpha)
 
         # Initialize the stopping criteria and tracking variables
@@ -348,10 +344,9 @@ class DLRCMAES:
         self.tolerance = tolerance
         self._fitness = None
         self._fitness_history = deque(maxlen=fitness_window_size)
-        self._update_interval_user = update_interval
         self._update_interval = (
-            self._get_update_interval() if update_interval is None
-            else update_interval
+            int(self._mu_eff) + 1
+            if update_interval is None else update_interval
             )
         self._current_expansion_reasons = []
         self._callback = callback
@@ -363,22 +358,18 @@ class DLRCMAES:
         # Initialize the stop flag
         self._stop_requested = False
 
-    def _get_update_interval(self):
+    def ask(self):
         """
-        Get the update interval depending on the rank.
+        Generate a new population.
 
         Returns
         -------
-        int
-            Update interval.
+        ndarray
+            Sample population (bound to the feasible region).
+
+        ndarray
+            Sample steps.
         """
-
-        return ceil(sqrt(
-            self.rank / (self._number_of_variables * self._lr_cov)
-            ))
-
-    def ask(self):
-        """Generate a new population."""
 
         # Sample from the standard multivariate Gaussian
         num_random = (
@@ -391,7 +382,7 @@ class DLRCMAES:
             )
 
         # Calculate the root of the covariance matrix
-        sqrt_core = sqrt(maximum(self._core, 0.0))
+        sqrt_core = sqrt(maximum(self._core, 1e-15))
 
         # Transform the samples into low-rank and noisy components
         structured_part = (z_low_rank * sqrt_core) @ self._basis.T
@@ -559,7 +550,7 @@ class DLRCMAES:
         """
 
         # Update the state variables
-        (path_sigma_new, mean_new, sigma_new, path_cov_new, update_switch
+        (path_sigma_new, sigma_new, mean_new, path_cov_new, update_switch
          ) = _tell(
             fitness,
             self._steps,
@@ -583,8 +574,8 @@ class DLRCMAES:
 
         # Save the state variables
         self._path_sigma[:] = path_sigma_new
-        self._mean[:] = mean_new
         self._sigma = sigma_new
+        self._mean[:] = mean_new
         self._path_cov[:] = path_cov_new
 
         # Check if the low-rank factors should be updated
@@ -609,8 +600,7 @@ class DLRCMAES:
                 self._low_rank_energy_tolerance,
                 update_switch=update_switch,
                 force_expansion=self.check_rank_expansion(
-                    steps_sorted[:self._elite_size, :]
-                    )
+                    steps_sorted[:self._elite_size, :])
                 )
 
             # Save the factor states
@@ -618,12 +608,6 @@ class DLRCMAES:
             self._core = core_new
             self._psi[:] = psi_new
             self.rank = rank_new
-
-            # Check if the update interval should be adapted
-            if self._update_interval_user is None:
-
-                # Refresh the update interval
-                self._update_interval = self._get_update_interval()
 
     def optimize(
             self,
@@ -841,14 +825,30 @@ class DLRCMAES:
             fit_old = nmean(history[:half])
             fit_new = nmean(history[half:])
 
-            # Get the fitness range
-            fit_range = ptp(history)
+            # Compute the logarithmized fitness values
+            log_old = log(abs(fit_old) + 1e-12)
+            log_new = log(abs(fit_new) + 1e-12)
 
-            # Check if the fitness improvement is reasonably small
-            if (fit_old - fit_new) / (fit_range + 1e-15) < 1e-2:
+            # Check if the relative improvement is small
+            if log_old-log_new < 1e-3:
 
                 # Set the fitness pressure flag
                 fitness_pressure = True
+
+            # Get the mean fitness
+            fit_mean = nmean(history)
+
+            # Get the fitness range
+            fit_range = ptp(history)
+
+            # Check if the fitness variation is very small
+            if fit_range / (abs(fit_mean) + 1e-15) < 1e-3:
+
+                # Set the fitness pressure flag
+                fitness_pressure = True
+
+            # Check if fitness pressure is applied
+            if fitness_pressure:
 
                 # Add the expansion reason
                 reasons.append('fitness_stagnation')
@@ -902,13 +902,13 @@ class DLRCMAES:
             self._psi
             )
 
-        # # Check if any eigenvalue is zero or the condition number explodes
-        # if min_eval < 1e-14 or (max_eval / (min_eval + 1e-15)) >= 1e14:
+        # Check if any eigenvalue is zero or the condition number explodes
+        if min_eval < 1e-14 or (max_eval / (min_eval + 1e-15)) >= 1e14:
 
-        #     # Add the solver info
-        #     self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'
+            # Add the solver info
+            self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'
 
-        #     return True
+            return True
 
         # Check if the optimal value is below a threshold
         if (self.fitness_threshold is not None
@@ -925,6 +925,9 @@ class DLRCMAES:
             # Convert the history to a list
             history = array(self._fitness_history)
 
+            # Get the mean fitness
+            fit_mean = nmean(history)
+
             # Get the fitness range
             fit_range = ptp(history)
 
@@ -937,8 +940,8 @@ class DLRCMAES:
 
                 return True
 
-            # Check if the relative fitness range is below tolerance
-            if fit_range / max(nmax(nabs(history)), 1.0) < self.tolerance:
+            # Check if the relative median difference is below tolerance
+            if fit_range / (nabs(fit_mean) + 1e-15) < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (
@@ -970,7 +973,7 @@ def _approx_spectrum_extremes(basis, core, psi):
     """Approximate the covariance spectrum extremes."""
 
     # Get the dimensionality
-    dim, rank = basis.shape
+    dim = basis.shape[0]
 
     # Estimate the minimum eigenvalue from psi (Weyl's inequality)
     min_eval = nmin(psi)
@@ -1010,7 +1013,7 @@ def _approx_spectrum_extremes(basis, core, psi):
         # Normalize the update vector
         sample = update_vec / vec_norm
 
-    # Compute the Rayleigh quotient
+    # Compute the Rayleigh quotient to get the maximum eigenvalue
     max_eval = sample @ update_vec
 
     return max_eval, min_eval
@@ -1042,7 +1045,7 @@ def _lanczos_matrix_inverse_sqrt_product(elite_mean_step, basis, core, psi):
     dim, rank = basis.shape
 
     # Determine the Krylov dimension
-    krylov_dim = min(dim, 20)
+    krylov_dim = min(dim, max(30, 3 * rank), 100)
 
     # Initialize the coefficients and the Krylov subspace basis
     alpha = zeros(krylov_dim, dtype=float64)
@@ -1137,8 +1140,8 @@ def _lanczos_matrix_inverse_sqrt_product(elite_mean_step, basis, core, psi):
 
 
 @njit(
-    types.Tuple((f8_1d, f8_1d, f8, f8_1d, f8))(
-        # Return: Tuple(path_sigma, mean, sigma, path_cov, update_switch)
+    types.Tuple((f8_1d, f8, f8_1d, f8_1d, f8))(
+        # Return: Tuple(path_sigma, sigma, mean, path_cov, update_switch)
         f8_1d,          # fitness
         f8_2d,          # steps
         f8_2d,          # weights
@@ -1219,7 +1222,7 @@ def _tell(
     # Update the covariance evolution path with the elite mean step
     path_cov += coeff * elite_mean_step
 
-    return path_sigma, mean, sigma, path_cov, update_switch
+    return path_sigma, sigma, mean, path_cov, update_switch
 
 
 @njit(
@@ -1273,7 +1276,7 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
         f8_2d,          # basis
         f8_1d,          # core
         f8_1d,          # psi
-        f8_2d,          # steps_sorted
+        f8_2d,          # elite_steps
         f8_2d,          # weights
         f8_1d,          # path_cov
         f8,             # lr_cov
@@ -1300,6 +1303,10 @@ def _adaptive_bug_step(
     # Get the dimension and rank
     dim, rank = basis.shape
 
+    # Get the transposed basis and the basis-core product
+    basis_tr = basis.T
+    basis_core = basis * core
+
     # Determine the maximum rank and the augmentation size
     max_rank = min(2 * rank, dim)
     aug_size = max_rank - rank
@@ -1307,71 +1314,51 @@ def _adaptive_bug_step(
     # Copy and flatten the weights
     weights_sorted = weights.ravel().copy()
 
+    # Transform the steps for negative-weight stabilization
+    steps_sorted_tr = steps_sorted @ basis
+
     # Get the indices for the negative weights
     neg_indices = where(weights_sorted < 0.0)[0]
 
     # Check if any negative weights are present
     if neg_indices.size > 0:
 
-        # Get the inverse square root of the core matrix
-        safe_core = maximum(1e-14, core)
-        inv_sqrt_core = 1.0 / sqrt(safe_core)
+        # Extract negative steps into a contiguous block
+        steps_neg = steps_sorted[neg_indices]
 
-        # Transform the steps for negative-weight stabilization
-        steps_sorted_tr = steps_sorted @ basis
+        # Inverse diagonal component D^(-1)
+        inv_psi = 1.0 / maximum(psi, 1e-15)
+        inv_psi_basis = inv_psi[:, None] * basis
 
-        # Perform an isotropic transformation
-        steps_neg_iso = steps_sorted_tr[neg_indices] * inv_sqrt_core
+        woodbury = diag(1.0 / maximum(core, 1e-15)) + basis.T @ inv_psi_basis
 
-        # Get the squared norms of the isotropic vectors
-        squared_z_norms = nsum(steps_neg_iso**2, axis=1)
+        # Compute D^(-1) Z
+        inv_psi_steps = inv_psi[:, None] * steps_neg.T
 
-        # Get the scaling factors
-        factors = dim / (squared_z_norms + 1e-15)
+        # Compute U^T D^(-1) Z
+        rhs = basis.T @ inv_psi_steps
+        correction = solve(woodbury, rhs)
 
-        # Rescale the weights to guarantee positive definiteness
-        weights_sorted[neg_indices] *= minimum(1.0, factors)
+        # Compute z_i^T C^(-1) z_i for all negative steps.
+        quadratic_forms = (
+            nsum(steps_neg.T * inv_psi_steps, axis=0)
+            - nsum(rhs * correction, axis=0)
+            )
 
-    # # Check if any negative weights are present
-    # if neg_indices.size > 0:
+        # Numerical safeguard
+        quadratic_forms = maximum(quadratic_forms, 0.0)
 
-    #     # Extract negative steps into a contiguous block
-    #     steps_neg = steps_sorted[neg_indices]
+        # Conservative sufficient condition for the complete
+        # negative-weight update to remain PSD
+        negative_energy = nsum(
+            nabs(weights_sorted[neg_indices]) * quadratic_forms
+            )
 
-    #     # Inverse diagonal component D^(-1)
-    #     inv_psi = 1.0 / maximum(psi, 1e-15)
-    #     inv_psi_basis = inv_psi[:, None] * basis
+        # Compute one common scaling factor for all negative weights
+        negative_scale = minimum(1.0, 0.99 / (negative_energy + 1e-15))
 
-    #     #
-    #     woodbury = diag(1.0 / maximum(core, 1e-15)) + basis.T @ inv_psi_basis
-
-    #     # Compute D^(-1) Z
-    #     inv_psi_steps = inv_psi[:, None] * steps_neg.T
-
-    #     # Compute U^T D^(-1) Z
-    #     rhs = basis.T @ inv_psi_steps
-    #     correction = solve(woodbury, rhs)
-
-    #     # Compute z_i^T C^(-1) z_i for all negative steps.
-    #     quadratic_forms = (
-    #         nsum(steps_neg.T * inv_psi_steps, axis=0)
-    #         - nsum(rhs * correction, axis=0)
-    #         )
-
-    #     # Numerical safeguard
-    #     quadratic_forms = maximum(quadratic_forms, 0.0)
-
-    #     # Conservative sufficient condition for the complete
-    #     # negative-weight update to remain PSD
-    #     negative_energy = nsum(
-    #         nabs(weights_sorted[neg_indices]) * quadratic_forms
-    #         )
-
-    #     # Compute one common scaling factor for all negative weights
-    #     negative_scale = minimum(1.0, 0.99 / (negative_energy + 1e-15))
-
-    #     # Rescale all negative weights
-    #     weights_sorted[neg_indices] *= negative_scale
+        # Rescale all negative weights
+        weights_sorted[neg_indices] *= negative_scale
 
     # Get the weights as a 2D array
     weights_sorted_2d = weights_sorted.reshape((-1, 1))
@@ -1385,71 +1372,48 @@ def _adaptive_bug_step(
     lr_decay = lr_rank_one + lr_rank_mu - lr_rank_one_adj
 
     # Compute the diagonal-free rank-one update
-    # rank_one_diag = path_cov ** 2
-    rank_one_term_u = path_cov[:, None] * (path_cov @ basis)
+    rank_one_diag = path_cov ** 2
+    rank_one_term_u = (
+        path_cov[:, None] * (path_cov @ basis)
+        - rank_one_diag[:, None] * basis
+        )
 
     # Compute the diagonal-free rank-mu update
-    # rank_mu_diag = nsum(weights_sorted_2d * steps_sorted**2, axis=0)
+    rank_mu_diag = nsum(weights_sorted_2d * steps_sorted**2, axis=0)
     steps_basis = steps_sorted @ basis
-    rank_mu_term_u = steps_sorted.T @ (weights_sorted_2d * steps_basis)
+    rank_mu_term_u = (
+        steps_sorted.T @ (weights_sorted_2d * steps_basis)
+        - rank_mu_diag[:, None] * basis
+        )
 
     # Determine the variance (diagonal) of the growth field
-    # growth_var = clip(
-    #     lr_rank_one * rank_one_diag + lr_rank_mu * rank_mu_diag, -0.1 * psi,
-    #     None
-    #     )
+    growth_var = clip(
+        lr_rank_one * rank_one_diag + lr_rank_mu * rank_mu_diag, -0.1 * psi,
+        None
+        )
 
     # Update psi with the growth field variance
-    psi_new = psi.copy() # maximum(psi + growth_var, 1e-3)
+    psi_new = maximum(1e-12,  psi / (1.0 + lr_decay)  + growth_var / (1.0 + lr_decay))
 
     # Set the initial state for the K-slice
-    k_slice_init = basis * core
+    k_slice_init = basis_core
 
     # Integrate the low-rank velocity field
     k_slice = (
         + lr_rank_one * rank_one_term_u
         + lr_rank_mu * rank_mu_term_u
-        + (1.0 - lr_decay) * k_slice_init
-        )
+        # + (1.0 - lr_decay) * k_slice_init
+        + (1.0) * k_slice_init
+        ) / (1 + lr_decay)
 
     # Augment the K-slice with random directions to allow rank adaptation
     k_aug = zeros((dim, max_rank))
     k_aug[:, :rank] = k_slice
-
-    #
-    n_added = 0
-
-    #
     if aug_size > 0:
-
-        # Add the orthogonal covariance evolution path
-        v = path_cov - basis @ (basis.T @ path_cov)
-        v_norm = norm(v)
-        if v_norm > 1e-12:
-            k_aug[:, rank + n_added] = v / v_norm
-            n_added += 1
-
-    #
-    if aug_size > n_added:
-
-        # Add the orthogonal contribution from the best selected step
-        v = steps_sorted[0].copy()
-        v -= basis @ (basis.T @ v)
-
-        if n_added > 0:
-            q = k_aug[:, rank:rank + n_added]
-            v -= q @ (q.T @ v)
-
-        v_norm = norm(v)
-        if v_norm > 1e-12:
-            k_aug[:, rank + n_added] = v / v_norm
-            n_added += 1
-
-    #
-    if aug_size > n_added:
-
-        # 3. Fill any remaining augmentation directions randomly.
-        k_aug[:, rank + n_added:max_rank] = randn(dim, aug_size - n_added)
+        random_noise = randn(dim, aug_size)
+        # orthogonal_noise = random_noise - basis @ (basis_tr @ random_noise)
+        # q_orth, _ = qr(orthogonal_noise)
+        k_aug[:, rank:max_rank] = random_noise
 
     # Compute an orthonormal basis of the augmented low-rank subspace
     uhat_aug, _ = qr(k_aug)
@@ -1458,24 +1422,29 @@ def _adaptive_bug_step(
     # Project the existing low-rank covariance into the augmented subspace
     proj = uhat_aug_tr @ basis
     ext_s = (proj * core) @ proj.T
+    # ext_s -= diag(diag(ext_s))
 
-    # Compute the rank-one update in the augmented space
-    path_aug = uhat_aug.T @ path_cov
-    rank_one_term_s = outer(path_aug, path_aug)
+    # Compute the diagonal-free rank-one update in the augmented space
+    # path_cov_aug = uhat_aug_tr @ path_cov
+    # rank_one_term_s = outer(path_cov_aug, path_cov_aug)
+    # rank_one_term_s -= diag(diag(rank_one_term_s))
+    rank_one_term_s = uhat_aug_tr @ (outer(path_cov, path_cov) - diag(rank_one_diag)) @ uhat_aug
 
-    # Compute the rank-mu update in the augmented space
-    steps_aug = steps_sorted @ uhat_aug
-    rank_mu_term_s = steps_aug.T @ (weights_sorted_2d * steps_aug)
+    # Compute the diagonal-free rank-mu update in the augmented space
+    # steps_aug_tr = steps_sorted @ uhat_aug
+    # rank_mu_term_s = steps_aug_tr.T @ (weights_sorted_2d * steps_aug_tr)
+    # rank_mu_term_s -= diag(diag(rank_mu_term_s))
+    rank_mu_term_s = uhat_aug_tr @ (steps_sorted.T @ (weights_sorted_2d * steps_sorted) - diag(rank_mu_diag)) @ uhat_aug
 
     # Assemble the low-rank correlation velocity field
     f_core = (
         + lr_rank_one * rank_one_term_s
         + lr_rank_mu * rank_mu_term_s
-        - lr_decay * ext_s
+        # - lr_decay * ext_s
         )
 
     # Integrate the low-rank matrix flow
-    shat = ext_s + f_core
+    shat = ext_s / (1 + lr_decay) + f_core / (1 + lr_decay)
 
     # Enforce symmetry
     shat = 0.5 * (shat + shat.T)
@@ -1484,50 +1453,63 @@ def _adaptive_bug_step(
     sigma, basis_sigma = eigh(shat)
 
     # Sort the eigenvalues and -vectors
-    idx = argsort(sigma)[::-1]
+    idx = argsort(nabs(sigma))[::-1]
     sigma = sigma[idx]
     basis_sigma = basis_sigma[:, idx]
 
     # Check if the rank should be adapted
     if low_rank_is_adaptive:
 
-        # Initialize the rank delta
-        rank_delta = 0
+        # # Initialize the rank delta
+        # rank_delta = 0
+
+        # # Check if the rank should be expanded due to the evolutionary state
+        # if force_expansion:
+
+        #     # Increase the rank
+        #     rank_delta += 1
+
+        # else:
+
+        #     # Determine rank from retained covariance energy
+        #     rank_energy = _energy_rank_selection(
+        #         sigma, energy_fraction=1-low_rank_energy_tolerance, min_rank=1
+        #         )
+
+        #     # Check if the proposed rank is smaller
+        #     if rank_energy < rank:
+
+        #         # Reduce the rank delta
+        #         rank_delta -= 1
+
+        #     # Check if the proposed rank is larger
+        #     elif rank_energy > rank:
+
+        #         # Increase the rank delta
+        #         rank_delta += 1
+
+        # # Clip the rank to the minimum/maximum allowed rank
+        # rank_new = rank + rank_delta
+        # rank_new = max(1, min(rank_new, low_rank_max_dimension))
+
+        #
+        shat_off = shat - diag(diag(shat))
+        sigma_off, _ = eigh(shat_off)
+        idx = argsort(nabs(sigma_off))[::-1]
+        sigma_off = sigma_off[idx]
+
+        # Determine rank directly from retained covariance energy, without
+        # capping the step to +/-1, so the rank can jump straight to what
+        # the energy criterion proposes (bounded by what the augmented
+        # probe can see, i.e. max_rank = min(2 * rank, dim))
+        rank_energy = _energy_rank_selection(
+            sigma_off, energy_fraction=1-low_rank_energy_tolerance, min_rank=1
+            )
 
         # Check if the rank should be expanded due to the evolutionary state
-        if force_expansion:
-
-            # Increase the rank
-            rank_delta += 1
-
-        else:
-
-            #
-            shat_off = shat - diag(diag(shat))
-            sigma_off, _ = eigh(shat_off)
-            idx = argsort(nabs(sigma_off))[::-1]
-            sigma_off = sigma_off[idx]
-
-            # Determine rank from retained covariance energy
-            rank_energy = _energy_rank_selection(
-                sigma_off, energy_fraction=1-low_rank_energy_tolerance,
-                min_rank=1
-                )
-
-            # Check if the proposed rank is smaller
-            if rank_energy < rank:
-
-                # Reduce the rank delta
-                rank_delta -= 1
-
-            # Check if the proposed rank is larger
-            elif rank_energy > rank:
-
-                # Increase the rank delta
-                rank_delta += 1
+        rank_new = max(rank_energy, rank + 1) if force_expansion else rank_energy
 
         # Clip the rank to the minimum/maximum allowed rank
-        rank_new = rank + rank_delta
         rank_new = max(1, min(rank_new, low_rank_max_dimension))
 
     else:
@@ -1535,8 +1517,15 @@ def _adaptive_bug_step(
         # Fix the rank
         rank_new = min(rank, low_rank_max_dimension)
 
+    # Project the eigenvalues onto the positive cone
+    threshold = max(1e-12, nabs(sigma[0]) / 1e12)
+    sigma_psd = maximum(sigma, threshold)
+
+    # Keep eigenvector ordering
+    basis_sigma_psd = basis_sigma
+
     # Truncate to the new rank
-    basis_new = uhat_aug @ basis_sigma[:, :rank_new]
-    core_new = sigma[:rank_new]
+    basis_new = uhat_aug @ basis_sigma_psd[:, :rank_new]
+    core_new = sigma_psd[:rank_new]
 
     return basis_new, core_new, psi_new, rank_new

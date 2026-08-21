@@ -667,9 +667,6 @@ class LMMAES:
             # Convert the history to a list
             history = array(self._fitness_history)
 
-            # Get the mean fitness
-            fit_mean = nmean(history)
-
             # Get the fitness range
             fit_range = ptp(history)
 
@@ -682,8 +679,8 @@ class LMMAES:
 
                 return True
 
-            # Check if the relative median difference is below tolerance
-            if fit_range / (nabs(fit_mean) + 1e-15) < self.tolerance:
+            # Check if the relative fitness range is below tolerance
+            if fit_range / max(nmax(nabs(history)), 1.0) < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (

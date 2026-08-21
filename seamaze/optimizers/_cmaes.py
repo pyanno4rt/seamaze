@@ -6,26 +6,31 @@
 
 from signal import getsignal, SIGINT, signal
 from time import time
+import warnings
 
 from collections import deque
 from math import inf
 from numba import njit, types
+from numba.core.errors import NumbaPerformanceWarning
 from numpy import (
-    add, arange, argmax, argmin, argsort, array, clip, exp, eye, float64, full,
-    isinf, log, maximum, minimum, ones, outer, ptp, sqrt, where, zeros)
+    add, arange, argmax, argmin, argsort, array, ceil, clip, exp, eye, float64,
+    full, isinf, log, maximum, minimum, ones, outer, ptp, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import max as nmax
 from numpy import mean as nmean
 from numpy import min as nmin
 from numpy import sum as nsum
-from numpy.linalg import norm
+from numpy.linalg import eigh, norm
 from numpy.random import default_rng
-from scipy.linalg import eigh
 
 # %% Internal package import
 
 from seamaze.logging import Logging
 from seamaze.utils import make_compat
+
+# %% Disable numba warnings
+
+warnings.filterwarnings("ignore", category=NumbaPerformanceWarning)
 
 # %% Class definition
 
@@ -36,7 +41,7 @@ class CMAES:
 
     This class implements the CMA-ES algorithm according to the paper:
 
-        Hansen, N. (2016). The CMA Evolution Strategy: A Tutorial. ArXiv,
+        Hansen, N. (2023). The CMA Evolution Strategy: A Tutorial. ArXiv,
         abs/1604.00772.
 
     Parameters
@@ -90,8 +95,12 @@ class CMAES:
     update_interval : int, default=None
         Frequency of the covariance update (in generations). Larger values
         (e.g. 10) can significantly speed up the algorithm for
-        high-dimensional problems. Defaults to int(µ_eff + 1), where µ_eff is
-        the variance effective selection mass.
+        high-dimensional problems. Defaults to
+
+            ceil(sqrt(1/lr_cov)),
+
+        where `rank` is the current low-rank dimension, `n` is the problem
+        dimension, and `lr_cov` is the covariance learning rate.
 
     min_log_level : {'debug', 'info', 'warning', 'error', 'critical'}, \
         default='debug'
@@ -278,7 +287,7 @@ class CMAES:
         self._fitness = None
         self._fitness_history = deque(maxlen=fitness_window_size)
         self._update_interval = (
-            int(self._mu_eff) + 1
+            ceil(sqrt(1/self._lr_cov))
             if update_interval is None else update_interval
             )
         self._callback = callback
@@ -462,7 +471,8 @@ class CMAES:
         """
 
         # Update the state variables
-        path_sigma_new, mean_new, sigma_new, path_cov_new, cov_new = _tell(
+        (path_sigma_new, mean_new, sigma_new, path_cov_new, update_switch
+         ) = _tell(
             fitness,
             self._steps,
             self._weights,
@@ -472,12 +482,9 @@ class CMAES:
             self._path_cov,
             self._mean,
             self._sigma,
-            self._cov,
             self._lr_sigma,
             self._lr_cov,
             self._lr_mean,
-            self._lr_rank_one,
-            self._lr_rank_mu,
             self._mu_eff,
             self._damp_sigma,
             self._expected_path_length,
@@ -490,31 +497,31 @@ class CMAES:
         self._mean[:] = mean_new
         self._sigma = sigma_new
         self._path_cov[:] = path_cov_new
-        self._cov[:] = cov_new
 
-        # Check if the low-rank factors should be updated
+        # Check if the matrix factors should be updated
         if self._opt_iter % self._update_interval == 0:
 
-            # Update the low-rank factors via eigendecomposition
-            self._core[:], self._basis[:] = eigh(
-                self._cov, overwrite_a=False, check_finite=False
+            # Get the steps sorted by fitness
+            steps_sorted = self._steps[argsort(fitness)]
+
+            # Update the covariance matrix and its factors
+            cov_new, root_cov_new, basis_new, core_new = _update_covariance(
+                self._basis,
+                self._core,
+                steps_sorted,
+                self._weights,
+                self._path_cov,
+                self._lr_cov,
+                self._lr_rank_one,
+                self._lr_rank_mu,
+                update_switch
                 )
 
-            # Sort the singular values and vectors in descending order
-            self._core[:] = self._core[::-1]
-            self._basis[:] = self._basis[:, ::-1]
-
-            # Clip the singular values
-            maximum(self._core, 1e-12, out=self._core)
-
-            # Update the sampling matrix
-            sqrt_core = sqrt(self._core)
-            self._root_cov[:] = self._basis * sqrt_core
-
-            # Reconstruct the covariance matrix
-            self._cov[:] = (
-                (self._basis * self._core) @ self._basis.T
-                )
+            # Save the factor states
+            self._cov[:] = cov_new
+            self._root_cov[:] = root_cov_new
+            self._basis[:] = basis_new
+            self._core[:] = core_new
 
     def optimize(
             self,
@@ -691,9 +698,6 @@ class CMAES:
             # Convert the history to a list
             history = array(self._fitness_history)
 
-            # Get the mean fitness
-            fit_mean = nmean(history)
-
             # Get the fitness range
             fit_range = ptp(history)
 
@@ -706,8 +710,8 @@ class CMAES:
 
                 return True
 
-            # Check if the relative median difference is below tolerance
-            if fit_range / (nabs(fit_mean) + 1e-15) < self.tolerance:
+            # Check if the relative fitness range is below tolerance
+            if fit_range / max(nmax(nabs(history)), 1.0) < self.tolerance:
 
                 # Add the solver info
                 self._result['solver_info'] = (
@@ -737,23 +741,20 @@ f8 = types.float64
 i8 = types.int64
 
 @njit(
-    types.Tuple((f8_1d, f8_1d, f8, f8_1d, f8_2d))(
-        # Return: path_sigma, mean, sigma, path_cov, cov
+    types.Tuple((f8_1d, f8_1d, f8, f8_1d, f8))(
+        # Return: path_sigma, mean, sigma, path_cov, update_switch
         f8_1d,          # fitness
         f8_2d,          # steps
         f8_2d,          # weights
-        f8_2d_f,        # basis
-        f8_1d,          # _core
+        f8_2d,          # basis
+        f8_1d,          # core
         f8_1d,          # path_sigma
         f8_1d,          # path_cov
         f8_1d,          # mean
         f8,             # sigma
-        f8_2d,          # cov
         f8,             # lr_sigma
         f8,             # lr_cov
         f8,             # lr_mean
-        f8,             # lr_rank_one
-        f8,             # lr_rank_mu
         f8,             # mu_eff
         f8,             # damp_sigma
         f8,             # expected_path_length
@@ -764,12 +765,9 @@ i8 = types.int64
     )
 def _tell(
     fitness, steps, weights, basis, core, path_sigma, path_cov, mean, sigma,
-    cov, lr_sigma, lr_cov, lr_mean, lr_rank_one, lr_rank_mu, mu_eff,
-    damp_sigma, expected_path_length, opt_iter, elite_size):
+    lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma, expected_path_length,
+    opt_iter, elite_size):
     """Update the state variables."""
-
-    # Get the search space dimension
-    dim = mean.size
 
     # Get the elite indices
     sorted_indices = argsort(fitness)
@@ -794,11 +792,11 @@ def _tell(
         sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff) * elite_mean_step_tr
         )
 
-    # Get the norm of the step size evolution path
-    ps_norm = norm(path_sigma)
-
     # Update the mean
     mean += (lr_mean * sigma) * elite_mean_step
+
+    # Get the norm of the step size evolution path
+    ps_norm = norm(path_sigma)
 
     # Update the step size
     sigma = sigma * exp(
@@ -828,11 +826,39 @@ def _tell(
     # Update the covariance evolution path with the elite mean step
     path_cov += coeff * elite_mean_step
 
+    return path_sigma, mean, sigma, path_cov, update_switch
+
+
+@njit(
+    types.Tuple((f8_2d, f8_2d, f8_2d, f8_1d))(
+        # Return: cov_new, root_cov_new, basis_new, core_new
+        f8_2d,          # basis
+        f8_1d,          # core
+        f8_2d,          # steps_sorted
+        f8_2d,          # weights
+        f8_1d,          # path_cov
+        f8,             # lr_cov
+        f8,             # lr_rank_one
+        f8,             # lr_rank_mu
+        f8,             # update_switch
+        ),
+    fastmath=True
+    )
+def _update_covariance(
+    basis, core, steps_sorted, weights, path_cov, lr_cov, lr_rank_one,
+    lr_rank_mu, update_switch):
+    """Update the covariance matrix."""
+
+    # Get the search space dimension
+    dim = basis.shape[0]
+
     # Get the adjusted rank-1 learning rate
     lr_rank_one_adj = (1.0-update_switch) * lr_rank_one * lr_cov * (2.0-lr_cov)
 
-    # Synchronize steps and weights with sorted fitness order
-    steps_sorted = steps[sorted_indices]
+    # Calculate the inverse rooted eigenvalues
+    inv_root_core = 1.0 / (sqrt(core) + 1e-15)
+
+    # Copy the weights
     weights_sorted = weights.copy()
 
     # Get the indices for the negative weights
@@ -862,8 +888,23 @@ def _tell(
         )
 
     # Update the covariance matrix
-    cov *= (1.0 - lr_rank_one - lr_rank_mu + lr_rank_one_adj)
-    cov += lr_rank_one * outer(path_cov, path_cov)
-    cov += lr_rank_mu * rank_mu_term
+    cov_new = (basis * core) @ basis.T
+    cov_new *= (1.0 - lr_rank_one - lr_rank_mu + lr_rank_one_adj)
+    cov_new += lr_rank_one * outer(path_cov, path_cov)
+    cov_new += lr_rank_mu * rank_mu_term
 
-    return path_sigma, mean, sigma, path_cov, cov
+    # Update the matrix factors via eigendecomposition
+    core_new, basis_new = eigh(cov_new)
+
+    # Sort the singular values and vectors in descending order
+    core_new = core_new[::-1]
+    basis_new[:] = basis_new[:, ::-1]
+
+    # Clip the singular values
+    core_new = maximum(core_new, 1e-12)
+
+    # Update the sampling matrix
+    sqrt_core = sqrt(core_new)
+    root_cov_new = basis_new * sqrt_core
+
+    return cov_new, root_cov_new, basis_new, core_new

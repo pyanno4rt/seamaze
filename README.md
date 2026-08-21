@@ -74,7 +74,7 @@ from seamaze.optimizers import DLRCMAES
 | `python`                       | <font size="3"> >=3.11, <4.0 </font>  |
 | `numpy`                        | <font size="3"> >=2.4.6 </font>       |
 | `scipy`                        | <font size="3"> >=1.17.1 </font>      |
-| `numba`                        | <font size="3"> >=0.66.0 </font>      |
+| `numba`                        | <font size="3"> >=0.67.0 </font>      |
 | `matplotlib`                   | <font size="3"> >=3.11.1 </font>      |
 | `seaborn`                      | <font size="3"> >=0.13.2 </font>      |
 
@@ -108,7 +108,7 @@ To cite *seamaze*, either use the link in the right sidebar of the Github landin
 @software{seamaze,
   title = {{seamaze}: a python library for classical, limited-memory, and dynamical low-rank covariance matrix adaptation evolution strategy},
   author = {Ortkamp, Tim and Patwardhan, Chinmay and Stammer, Pia},
-  version = {0.0.10},
+  version = {0.0.11},
   license = {MIT},
   year = {2026},
   publisher = {GitHub},

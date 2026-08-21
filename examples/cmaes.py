@@ -40,10 +40,10 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Sphere'
+name = 'Rotated Ellipsoid'
 
 # Enter the problem dimensionality
-ndim = 10
+ndim = 100
 
 # Get the benchmark function class
 problems = {
@@ -86,7 +86,7 @@ with MonitorCMAES(
         fitness_window_size=50,
         tolerance=1e-6,
         sigma_threshold=1e-8,
-        update_interval=None,
+        update_interval=1,
         min_log_level='debug',
         callback=monitor.base,  # Enable basic monitoring
         random_state=42
