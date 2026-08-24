@@ -40,10 +40,10 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Rosenbrock'
+name = 'Rotated Ellipsoid'
 
 # Enter the problem dimensionality
-ndim = 10
+ndim = 100
 
 # Get the benchmark function class
 problems = {

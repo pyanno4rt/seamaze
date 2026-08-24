@@ -18,7 +18,7 @@ from numba.core.errors import NumbaPerformanceWarning
 from numpy import (
     add, arange, argmin, argsort, array, ascontiguousarray, asfortranarray,
     ceil, clip, diag, exp, eye, float64, full, isinf, log, maximum, minimum,
-    ptp, ones, outer, sqrt, where, zeros)
+    ptp, ones, outer, sort, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import max as nmax
 from numpy import mean as nmean
@@ -86,8 +86,7 @@ class DLRCMAES:
         Initial step size.
 
     low_rank_init_dimension : int, default=None
-        Initial rank of the approximation. Defaults to
-        4 + int(3*log(`number_of_variables`)).
+        Initial rank of the approximation. Defaults to 1.
 
     low_rank_max_dimension : int, default=None
         Maximum rank of the approximation. Defaults to `number_of_variables`.
@@ -172,7 +171,7 @@ class DLRCMAES:
         # Log a message about the initialization
         self.logger.info('Initializing DLR-CMA-ES ...')
 
-        # Set the random seed
+        # Check if no random state has been passed
         if random_state is None:
 
             # Initialize the default RNG
@@ -266,7 +265,7 @@ class DLRCMAES:
             ).reshape(-1, 1)
 
         # Get the low-rank adaptivity parameters
-        default_rank = 4 + int(3 * log(self._number_of_variables))
+        default_rank = 1
 
         self._low_rank_max_dimension = (
             self._number_of_variables
@@ -282,7 +281,7 @@ class DLRCMAES:
         self._low_rank_init_dimension = min(
             max(1, self._low_rank_init_dimension),
             self._number_of_variables,
-            self._low_rank_max_dimension,
+            self._low_rank_max_dimension
             )
 
         self._low_rank_is_adaptive = low_rank_is_adaptive
@@ -329,16 +328,13 @@ class DLRCMAES:
         self._path_cov = zeros(self._number_of_variables, dtype=float64)
         self._mean = zeros(self._number_of_variables, dtype=float64)
 
-        psi_floor = 0.0
-        init_var = 1.0
-        alpha = 1.0 - psi_floor / init_var
         self._basis = eye(
             self._number_of_variables, self.rank, dtype=float64
             )
-        self._core = (alpha * init_var) * ones(self.rank, dtype=float64)
+        self._core = ones(self.rank, dtype=float64)
 
         self._psi = ones(self._number_of_variables, dtype=float64)
-        self._psi[:self.rank] *= (1.0 - alpha)
+        self._psi[:self.rank] *= 0.0
 
         # Initialize the stopping criteria and tracking variables
         self.maximum_iterations = maximum_iterations
@@ -397,7 +393,7 @@ class DLRCMAES:
         structured_part = (z_low_rank * sqrt_core) @ self._basis.T
         noise_part = z_noise * sqrt(self._psi)
 
-        # Get the steps by adding the components
+        # Get the steps from the split-Gaussian sampling
         self._steps[:num_random] = structured_part + noise_part
 
         # Check if a gradient has been provided
@@ -408,8 +404,7 @@ class DLRCMAES:
 
             # Compute the unscaled natural gradient
             low_rank_gradient = (
-                self._basis
-                @ (self._core * (self._basis.T @ gradient))
+                self._basis @ (self._core * (self._basis.T @ gradient))
                 )
             natural_gradient = low_rank_gradient + self._psi * gradient
 
@@ -437,20 +432,18 @@ class DLRCMAES:
                 0.0, self._population - self.upper_variable_bounds
                 )
 
-            # Compute the total bound violation
-            bound_errors = eps_lower + eps_upper
+            # Compute the squared total bound errors
+            bound_errors_squared = (eps_lower + eps_upper) ** 2
 
             # Average the squared errors for each individual
-            self._mean_squared_bound_errors = nmean(bound_errors ** 2, axis=1)
+            self._mean_squared_bound_errors = nmean(
+                bound_errors_squared, axis=1)
 
             # Compute the relative severity of bound violations
-            bound_errors_squared = bound_errors ** 2
-            steps_squared = (self._sigma * self._steps) ** 2
-
             violation_severity = nmean(
                 nsum(bound_errors_squared, axis=1) /
                 (nsum(bound_errors_squared, axis=1) +
-                 nsum(steps_squared, axis=1) +
+                 nsum((self._sigma * self._steps) ** 2, axis=1) +
                  1e-15
                  )
                 ) ** 2
@@ -530,7 +523,7 @@ class DLRCMAES:
             selection_fitness = true_fitness
 
         # Get the best unpenalized fitness
-        best_index = argmin(selection_fitness)
+        best_index = argmin(true_fitness)
         true_best_fitness = true_fitness[best_index]
 
         # Append the best (unpenalized) fitness to the history
@@ -548,7 +541,9 @@ class DLRCMAES:
 
         return true_fitness, selection_fitness
 
-    def tell(self, fitness):
+    def tell(
+            self,
+            fitness):
         """
         Update the state variables and perform an adaptive BUG step.
 
@@ -587,13 +582,16 @@ class DLRCMAES:
         self._sigma = sigma_new
         self._path_cov[:] = path_cov_new
 
-        # Check if the low-rank factors should be updated
+        # Check if the covariance factors should be updated
         if self._opt_iter % self._update_interval == 0:
+
+            # Get the current rank
+            rank_current = self.rank
 
             # Get the steps sorted by fitness
             steps_sorted = self._steps[argsort(fitness)]
 
-            # Update the low-rank and noise factors
+            # Update the covariance factors
             basis_new, core_new, psi_new, rank_new = _adaptive_bug_step(
                 self._basis,
                 self._core,
@@ -613,14 +611,14 @@ class DLRCMAES:
                     )
                 )
 
-            # Save the factor states
+            # Save the covariance state variables
             self._basis = basis_new
             self._core = core_new
             self._psi[:] = psi_new
             self.rank = rank_new
 
             # Check if the update interval should be adapted
-            if self._update_interval_user is None:
+            if rank_new != rank_current and self._update_interval_user is None:
 
                 # Refresh the update interval
                 self._update_interval = self._get_update_interval()
@@ -746,7 +744,7 @@ class DLRCMAES:
         Parameters
         ----------
         elite_steps : ndarray
-            Elite sample steps.
+            Elite mutation steps.
 
         Returns
         -------
@@ -754,7 +752,7 @@ class DLRCMAES:
             Indicator for rank expansion.
         """
 
-        # Check if the current rank equals the dimensionality
+        # Check if the current rank equals the number of variables
         if self.rank == self._number_of_variables:
 
             return False
@@ -784,11 +782,11 @@ class DLRCMAES:
             path_explained_energy / (path_total_energy + 1e-15)
             )
 
-        # Compare against the expected explained fraction of a random subspace
+        # Get the ratio of explained versus expected energy
         path_ratio = path_explained_ratio / (expected_explained_ratio + 1e-15)
 
-        # Check if the fraction is smaller than 50%
-        if path_ratio < 0.5:
+        # Check if the ratio is smaller than 80%
+        if path_ratio < 0.8:
 
             # Set the path pressure flag
             path_pressure = True
@@ -796,10 +794,10 @@ class DLRCMAES:
             # Add the expansion reason
             reasons.append('path_excess_residual')
 
-        # Project elite steps into the current low-rank subspace
+        # Project the elite steps into the current low-rank subspace
         elite_coords = elite_steps @ self._basis
 
-        # Calculate weighted explained and total elite step energies
+        # Calculate the explained and total weighted elite step energies
         elite_explained_energy = nsum(
             self._weights[:self._elite_size]
             * nsum(elite_coords * elite_coords, axis=1)
@@ -814,13 +812,13 @@ class DLRCMAES:
             elite_explained_energy / (elite_total_energy + 1e-15)
             )
 
-        # Compare against the expected explained fraction of a random subspace
+        # Get the ratio of explained versus expected energy
         elite_ratio = (
             elite_explained_ratio / (expected_explained_ratio + 1e-15)
             )
 
-        # Check if the ratio is small
-        if elite_ratio < 0.5:
+        # Check if the ratio is smaller than 80%
+        if elite_ratio < 0.8:
 
             # Set the steps pressure flag
             steps_pressure = True
@@ -895,20 +893,23 @@ class DLRCMAES:
 
             return True
 
-        # Get the maximum and minimum eigenvalue
-        max_eval, min_eval = _approx_spectrum_extremes(
-            self._basis,
-            self._core,
-            self._psi
-            )
+        # Check if the condition number criterion should be re-evaluated
+        if self._opt_iter % self._update_interval == 0:
 
-        # # Check if any eigenvalue is zero or the condition number explodes
-        # if min_eval < 1e-14 or (max_eval / (min_eval + 1e-15)) >= 1e14:
+            # Approximate the maximum and minimum eigenvalue
+            max_eval, min_eval = _lanczos_spectrum_extremes(
+                self._basis,
+                self._core,
+                self._psi
+                )
 
-        #     # Add the solver info
-        #     self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'
+            # Check if any eigenvalue is zero or the condition number explodes
+            if min_eval < 1e-14 or (max_eval / (min_eval + 1e-15)) >= 1e14:
 
-        #     return True
+                # Add the solver info
+                self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'
+
+                return True
 
         # Check if the optimal value is below a threshold
         if (self.fitness_threshold is not None
@@ -966,52 +967,113 @@ bo = types.bool_
         ),
     fastmath=True
     )
-def _approx_spectrum_extremes(basis, core, psi):
-    """Approximate the covariance spectrum extremes."""
+def _lanczos_spectrum_extremes(basis, core, psi):
+    """Approximate the smallest and largest eigenvalues of C."""
 
-    # Get the dimensionality
-    dim, rank = basis.shape
+    # Get the problem dimensionality
+    dim = basis.shape[0]
 
-    # Estimate the minimum eigenvalue from psi (Weyl's inequality)
-    min_eval = nmin(psi)
+    # Determine the Krylov subspace dimension
+    krylov_dim = min(dim, 20)
 
-    # Check if the value is very small
-    if min_eval < 1e-12:
+    # Initialize the Lanczos coefficients
+    alpha = zeros(krylov_dim, dtype=float64)
+    beta = zeros(krylov_dim, dtype=float64)
 
-        # Set the value to 1e-12 to prevent numerical issues
-        min_eval = 1e-12
+    # Initialize the Krylov basis
+    krylov_basis = zeros((krylov_dim, dim)).T
 
-    # Draw a random vector from the standard normal distribution
-    sample = randn(dim)
+    # Start from a random normalized direction
+    vector = randn(dim)
+    vector_norm = norm(vector)
 
-    # Get the sample norm
-    sample_norm = norm(sample)
+    # Check if the norm is sufficiently small
+    if vector_norm < 1e-15:
 
-    # Check if the norm is positive
-    if sample_norm > 0:
+        # Fall back to the diagonal component
+        return nmax(psi), nmin(psi)
 
-        # Normalize the vector
-        sample = sample / sample_norm
+    # Normalize the initial Krylov vector
+    krylov_basis[:, 0] = vector / vector_norm
 
-    # Loop for a fixed number of power iterations
-    for _ in range(8):
+    # Track the current Krylov subspace dimensionality
+    current_dim = krylov_dim
 
-        # Compute the product C*x efficiently
-        update_vec = basis @ (core * (basis.T @ sample)) + psi * sample
+    # Loop over the dimensions of the Krylov subspace
+    for index in range(krylov_dim):
 
-        # Get the norm of the update vector
-        vec_norm = norm(update_vec)
+        # Get the current Krylov vector
+        current_basis = krylov_basis[:, index]
 
-        # Check if the norm is very small
-        if vec_norm < 1e-12:
+        # Apply the covariance matrix to the current direction
+        update_vec = (
+            basis @ (core * (basis.T @ current_basis)) + psi * current_basis
+            )
 
-            break
+        # Perfom full reorthogonalization twice
+        for _ in range(2):
 
-        # Normalize the update vector
-        sample = update_vec / vec_norm
+            # Loop until the current dimension of the Krylov subspace
+            for sub in range(index + 1):
 
-    # Compute the Rayleigh quotient
-    max_eval = sample @ update_vec
+                # Get the i-th Krylov vector
+                sub_basis = krylov_basis[:, sub]
+
+                # Project the next vector onto the Krylov vector
+                projection = sub_basis.T @ update_vec
+
+                # Remove the projected component
+                update_vec -= projection * sub_basis
+
+                # Check if the penultimate dimension has been reached
+                if _ == 0 and sub == index:
+
+                    # Store the current diagonal coefficient
+                    alpha[index] = projection
+
+        # Check if the final Krylov vector has been reached
+        if index < krylov_dim - 1:
+
+            # Compute the norm of the residual vector
+            beta_next = norm(update_vec)
+
+            # Store the off-diagonal Lanczos coefficient
+            beta[index + 1] = beta_next
+
+            # Check for "happy breakdown" (exact solution found)
+            if beta_next < 1e-12:
+
+                # Set the current dimensionality to the final index
+                current_dim = index + 1
+
+                break
+
+            # Normalize and store the next Krylov vector
+            krylov_basis[:, index + 1] = update_vec / beta_next
+
+    # Construct the symmetric tridiagonal Lanczos matrix
+    tridiagonal = diag(alpha[:current_dim])
+
+    # Check if the current Krylov dimension is larger than one
+    if current_dim > 1:
+
+        # Fill the first upper and lower subdiagonals
+        tridiagonal += (
+            diag(beta[1:current_dim], k=1) + diag(beta[1:current_dim], k=-1)
+            )
+
+    # Perform an eigendecomposition of the projected matrix
+    tridiagonal_evals, _ = eigh(tridiagonal)
+
+    # Get the smallest and largest Ritz eigenvalues
+    min_eval = tridiagonal_evals[0]
+    max_eval = tridiagonal_evals[-1]
+
+    # Prevent numerical errors
+    min_eval = max(min_eval, 1e-15)
+
+    # Keep the estimated spectrum consistent
+    max_eval = max(max_eval, min_eval)
 
     return max_eval, min_eval
 
@@ -1026,30 +1088,32 @@ def _approx_spectrum_extremes(basis, core, psi):
         ),
     fastmath=True
     )
-def _lanczos_matrix_inverse_sqrt_product(elite_mean_step, basis, core, psi):
-    """Compute the inverse matrix square root-vector product C^(-1/2)*x."""
+def _lanczos_inverse_sqrt_product(elite_mean_step, basis, core, psi):
+    """Approximate the inverse matrix square root-vector product C^(-1/2)*x."""
 
     # Get the norm of the elite mean step
     norm_step = norm(elite_mean_step)
 
-    # Check if the mean step is very small
+    # Check if the norm is sufficiently small
     if norm_step < 1e-15:
 
-        # Return zeros
+        # Return the zero vector
         return zeros(elite_mean_step.shape[0], dtype=float64)
 
-    # Get the shape of the basis matrix
-    dim, rank = basis.shape
+    # Get the problem dimensionality
+    dim = basis.shape[0]
 
-    # Determine the Krylov dimension
+    # Determine the Krylov subspace dimension
     krylov_dim = min(dim, 20)
 
-    # Initialize the coefficients and the Krylov subspace basis
+    # Initialize the Lanczos coefficients
     alpha = zeros(krylov_dim, dtype=float64)
     beta = zeros(krylov_dim, dtype=float64)
+
+    # Initialize the Krylov basis
     krylov_basis = zeros((krylov_dim, dim)).T
 
-    # Insert the first basis vector
+    # Normalize the initial Krylov vector
     krylov_basis[:, 0] = elite_mean_step / norm_step
 
     # Track the current Krylov subspace dimensionality
@@ -1058,7 +1122,7 @@ def _lanczos_matrix_inverse_sqrt_product(elite_mean_step, basis, core, psi):
     # Loop over the dimensions of the Krylov subspace
     for index in range(krylov_dim):
 
-        # Get the current basis vector
+        # Get the current Krylov vector
         current_basis = krylov_basis[:, index]
 
         # Generate the next Krylov vector
@@ -1066,31 +1130,34 @@ def _lanczos_matrix_inverse_sqrt_product(elite_mean_step, basis, core, psi):
             basis @ (core * (basis.T @ current_basis)) + psi * current_basis
             )
 
-        # Loop until the current dimension of the Krylov subspace
-        for sub in range(index + 1):
+        # Perfom full reorthogonalization twice
+        for _ in range(2):
 
-            # Get the i-th Krylov basis vector
-            sub_basis = krylov_basis[:, sub]
+            # Loop until the current dimension of the Krylov subspace
+            for sub in range(index + 1):
 
-            # Project the next vector onto the i-th Krylov basis
-            projection = sub_basis.T @ update_vec
+                # Get the i-th Krylov vector
+                sub_basis = krylov_basis[:, sub]
 
-            # Check if the penultimate dimension has been reached
-            if sub == index:
+                # Project the next vector onto the Krylov vector
+                projection = sub_basis.T @ update_vec
 
-                # Store the alpha coefficient
-                alpha[index] = projection
+                # Remove the projected component
+                update_vec -= projection * sub_basis
 
-            # "Clean" the update vector by the projection
-            update_vec = update_vec - projection * sub_basis
+                # Check if the penultimate dimension has been reached
+                if _ == 0 and sub == index:
 
-        # Check if the final dimension has not been reached
+                    # Store the current diagonal coefficient
+                    alpha[index] = projection
+
+        # Check if the final Krylov vector has been reached
         if index < krylov_dim - 1:
 
-            # Get the beta value by the update vector norm
+            # Compute the norm of the residual vector
             beta_next = norm(update_vec)
 
-            # Insert the value at the next index of the beta vector
+            # Store the off-diagonal Lanczos coefficient
             beta[index + 1] = beta_next
 
             # Check for "happy breakdown" (exact solution found)
@@ -1101,16 +1168,16 @@ def _lanczos_matrix_inverse_sqrt_product(elite_mean_step, basis, core, psi):
 
                 break
 
-            # Store the new Krylov basis vector
+            # Normalize and store the next Krylov vector
             krylov_basis[:, index + 1] = update_vec / beta_next
 
-    # Initialize the tridiagonal projection matrix by the alpha values
+    # Construct the symmetric tridiagonal Lanczos matrix
     tridiagonal = diag(alpha[:current_dim])
 
     # Check if the current Krylov dimension is larger than one
     if current_dim > 1:
 
-        # Fill the subdiagonals of the projection matrix
+        # Fill the first upper and lower subdiagonals
         tridiagonal += (
             diag(beta[1:current_dim], k=1) + diag(beta[1:current_dim], k=-1)
             )
@@ -1118,8 +1185,13 @@ def _lanczos_matrix_inverse_sqrt_product(elite_mean_step, basis, core, psi):
     # Perform an eigendecomposition on the projection matrix
     tridiagonal_evals, tridiagonal_evecs = eigh(tridiagonal)
 
-    # Safeguard against small eigenvalues
-    threshold = max(1e-15, tridiagonal_evals[-1] * 1e-12)
+    # Get the largest Ritz eigenvalue
+    lambda_max = tridiagonal_evals[-1]
+
+    # Apply a relative eigenvalue floor for numerical stability
+    threshold = max(1e-15, 1e-12 * lambda_max)
+
+    # Safeguard the projected spectrum against non-positive Ritz values
     tridiagonal_evals = maximum(tridiagonal_evals, threshold)
 
     # Calculate the inner vector (T^(-1/2) * e_1||x||)
@@ -1129,8 +1201,10 @@ def _lanczos_matrix_inverse_sqrt_product(elite_mean_step, basis, core, psi):
             inv_sqrt_evals * (tridiagonal_evecs[0, :] * norm_step))
         )
 
-    # Get the approximated inverse matrix square root-vector product
+    # Restrict the Krylov basis to the generated subspace
     krylov_slice = asfortranarray(krylov_basis[:, :current_dim])
+
+    # Map the projected result back to the original space
     approximation = krylov_slice @ inner_vector
 
     return approximation
@@ -1180,9 +1254,7 @@ def _tell(
     path_sigma *= (1.0 - lr_sigma)
     path_sigma += (
         sqrt(lr_sigma * (2.0 - lr_sigma) * mu_eff)
-        * _lanczos_matrix_inverse_sqrt_product(
-            elite_mean_step, basis, core, psi
-            )
+        * _lanczos_inverse_sqrt_product(elite_mean_step, basis, core, psi)
         )
 
     # Get the norm of the step size evolution path
@@ -1196,7 +1268,7 @@ def _tell(
         (lr_sigma / damp_sigma) * (ps_norm / expected_path_length - 1.0)
         )
 
-    # Check if the updated sigma is lower than 1e-15
+    # Check if the updated sigma is sufficiently small
     if sigma < 1e-15:
 
         # Clip to 1e-15
@@ -1213,7 +1285,7 @@ def _tell(
     # Compute the 'keep' term of the covariance evolution path
     path_cov *= (1.0 - lr_cov)
 
-    # Pre-compute the coefficient
+    # Precompute the coefficient
     coeff = update_switch * sqrt(lr_cov * (2.0 - lr_cov) * mu_eff)
 
     # Update the covariance evolution path with the elite mean step
@@ -1243,7 +1315,7 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
         # Cumulate the total energy
         total_energy += eigenvalues[index]**2
 
-    # Check if the total energy is very small
+    # Check if the total energy is sufficiently small
     if total_energy <= 1e-15:
 
         # Return the minimum rank
@@ -1297,7 +1369,7 @@ def _adaptive_bug_step(
     basis = asfortranarray(basis)
     steps_sorted = ascontiguousarray(steps_sorted)
 
-    # Get the dimension and rank
+    # Get the problem dimensionality and current rank
     dim, rank = basis.shape
 
     # Determine the maximum rank and the augmentation size
@@ -1313,67 +1385,46 @@ def _adaptive_bug_step(
     # Check if any negative weights are present
     if neg_indices.size > 0:
 
-        # Get the inverse square root of the core matrix
-        safe_core = maximum(1e-14, core)
-        inv_sqrt_core = 1.0 / sqrt(safe_core)
+        # Extract negative steps into a contiguous block
+        steps_neg = steps_sorted[neg_indices]
 
-        # Transform the steps for negative-weight stabilization
-        steps_sorted_tr = steps_sorted @ basis
+        # Compute the inverse diagonal component
+        inv_psi = 1.0 / maximum(psi, 1e-15)
 
-        # Perform an isotropic transformation
-        steps_neg_iso = steps_sorted_tr[neg_indices] * inv_sqrt_core
+        # Project the inverse onto the basis
+        inv_psi_basis = inv_psi[:, None] * basis
 
-        # Get the squared norms of the isotropic vectors
-        squared_z_norms = nsum(steps_neg_iso**2, axis=1)
+        # Build the small Woodbury matrix
+        woodbury = diag(1.0 / maximum(core, 1e-15)) + basis.T @ inv_psi_basis
 
-        # Get the scaling factors
-        factors = dim / (squared_z_norms + 1e-15)
+        # Apply the inverse scaling to the negative steps
+        inv_psi_steps = inv_psi[:, None] * steps_neg.T
 
-        # Rescale the weights to guarantee positive definiteness
-        weights_sorted[neg_indices] *= minimum(1.0, factors)
+        # Project the scaled steps onto the basis
+        rhs = basis.T @ inv_psi_steps
 
-    # # Check if any negative weights are present
-    # if neg_indices.size > 0:
+        # Solve the small Woodbury system
+        correction = solve(woodbury, rhs)
 
-    #     # Extract negative steps into a contiguous block
-    #     steps_neg = steps_sorted[neg_indices]
+        # Measure the step size in the inverse covariance metric
+        quadratic_forms = (
+            nsum(steps_neg.T * inv_psi_steps, axis=0)
+            - nsum(rhs * correction, axis=0)
+            )
 
-    #     # Inverse diagonal component D^(-1)
-    #     inv_psi = 1.0 / maximum(psi, 1e-15)
-    #     inv_psi_basis = inv_psi[:, None] * basis
+        # Ensure non-negative length
+        quadratic_forms = maximum(quadratic_forms, 0.0)
 
-    #     #
-    #     woodbury = diag(1.0 / maximum(core, 1e-15)) + basis.T @ inv_psi_basis
+        # Convert the step size into a scaling factor
+        factors = dim / (quadratic_forms + 1e-15)
 
-    #     # Compute D^(-1) Z
-    #     inv_psi_steps = inv_psi[:, None] * steps_neg.T
+        # Prevent the weights from increasing
+        factors = minimum(1.0, factors)
 
-    #     # Compute U^T D^(-1) Z
-    #     rhs = basis.T @ inv_psi_steps
-    #     correction = solve(woodbury, rhs)
+        # Apply the weight rescaling using the factors
+        weights_sorted[neg_indices] *= factors
 
-    #     # Compute z_i^T C^(-1) z_i for all negative steps.
-    #     quadratic_forms = (
-    #         nsum(steps_neg.T * inv_psi_steps, axis=0)
-    #         - nsum(rhs * correction, axis=0)
-    #         )
-
-    #     # Numerical safeguard
-    #     quadratic_forms = maximum(quadratic_forms, 0.0)
-
-    #     # Conservative sufficient condition for the complete
-    #     # negative-weight update to remain PSD
-    #     negative_energy = nsum(
-    #         nabs(weights_sorted[neg_indices]) * quadratic_forms
-    #         )
-
-    #     # Compute one common scaling factor for all negative weights
-    #     negative_scale = minimum(1.0, 0.99 / (negative_energy + 1e-15))
-
-    #     # Rescale all negative weights
-    #     weights_sorted[neg_indices] *= negative_scale
-
-    # Get the weights as a 2D array
+    # Lift the weights
     weights_sorted_2d = weights_sorted.reshape((-1, 1))
 
     # Get the adjusted rank-1 learning rate
@@ -1384,80 +1435,87 @@ def _adaptive_bug_step(
     # Get the decay rate
     lr_decay = lr_rank_one + lr_rank_mu - lr_rank_one_adj
 
-    # Compute the diagonal-free rank-one update
-    # rank_one_diag = path_cov ** 2
+    # Compute the rank-one update
     rank_one_term_u = path_cov[:, None] * (path_cov @ basis)
 
-    # Compute the diagonal-free rank-mu update
-    # rank_mu_diag = nsum(weights_sorted_2d * steps_sorted**2, axis=0)
+    # Compute the rank-mu update
     steps_basis = steps_sorted @ basis
     rank_mu_term_u = steps_sorted.T @ (weights_sorted_2d * steps_basis)
 
-    # Determine the variance (diagonal) of the growth field
-    # growth_var = clip(
-    #     lr_rank_one * rank_one_diag + lr_rank_mu * rank_mu_diag, -0.1 * psi,
-    #     None
-    #     )
-
-    # Update psi with the growth field variance
-    psi_new = psi.copy() # maximum(psi + growth_var, 1e-3)
-
-    # Set the initial state for the K-slice
-    k_slice_init = basis * core
-
-    # Integrate the low-rank velocity field
-    k_slice = (
-        + lr_rank_one * rank_one_term_u
-        + lr_rank_mu * rank_mu_term_u
-        + (1.0 - lr_decay) * k_slice_init
+    # Get the diagonal of the covariance update
+    lr_diag_upd = (
+        lr_rank_one * path_cov**2
+        + lr_rank_mu * nsum(weights_sorted_2d * steps_sorted**2, axis=0)
+        + (1.0 - lr_decay) * (nsum(basis**2 * core, axis=1) + psi)
         )
 
-    # Augment the K-slice with random directions to allow rank adaptation
+    # Apply the update to the current low-rank covariance factor
+    k_slice = (
+        lr_rank_one * rank_one_term_u
+        + lr_rank_mu * rank_mu_term_u
+        + (1.0 - lr_decay) * (basis * core)
+        )
+
+    # Initialize the augmented low-rank covariance factor
     k_aug = zeros((dim, max_rank))
     k_aug[:, :rank] = k_slice
 
-    #
+    # Compute the orthogonal basis of k_slice
+    q_slice, _ = qr(k_slice)
+
+    # Initialize the augmentation counter
     n_added = 0
 
-    #
-    if aug_size > 0:
+    # Loop over the number of required augmentation vectors
+    for index in range(aug_size):
 
-        # Add the orthogonal covariance evolution path
-        v = path_cov - basis @ (basis.T @ path_cov)
-        v_norm = norm(v)
-        if v_norm > 1e-12:
-            k_aug[:, rank + n_added] = v / v_norm
+        # Check if the index is zero
+        if index == 0:
+
+            # Start with the covariance evolution path
+            vector = path_cov.copy()
+
+        # Check if an intermediate index is used
+        elif index - 1 < steps_sorted.shape[0]:
+
+            # Try a successful mutation step
+            vector = steps_sorted[index - 1].copy()
+
+        else:
+
+            # Fall back to a random direction
+            vector = randn(dim)
+
+        # Perform full reorthogonalization twice
+        for _ in range(2):
+
+            # Project onto the orthogonal complement of the current basis
+            vector -= q_slice @ (q_slice.T @ vector)
+
+            # Check if the basis has already been augmented
+            if n_added > 0:
+
+                # Get the the previous augmentation vectors
+                previous = k_aug[:, rank:rank + n_added]
+
+                # Orthogonalize the current vector against the previous
+                vector -= previous @ (previous.T @ vector)
+
+        # Get the norm
+        vector_norm = norm(vector)
+
+        # Check if the norm is sufficiently small
+        if vector_norm > 1e-12:
+
+            # Add the normalized vector
+            k_aug[:, rank + n_added] = vector / vector_norm
+
+            # Increase the counter
             n_added += 1
 
-    #
-    if aug_size > n_added:
-
-        # Add the orthogonal contribution from the best selected step
-        v = steps_sorted[0].copy()
-        v -= basis @ (basis.T @ v)
-
-        if n_added > 0:
-            q = k_aug[:, rank:rank + n_added]
-            v -= q @ (q.T @ v)
-
-        v_norm = norm(v)
-        if v_norm > 1e-12:
-            k_aug[:, rank + n_added] = v / v_norm
-            n_added += 1
-
-    #
-    if aug_size > n_added:
-
-        # 3. Fill any remaining augmentation directions randomly.
-        k_aug[:, rank + n_added:max_rank] = randn(dim, aug_size - n_added)
-
-    # Compute an orthonormal basis of the augmented low-rank subspace
+    # Compute an orthonormal basis of the augmented low-rank directions
     uhat_aug, _ = qr(k_aug)
     uhat_aug_tr = uhat_aug.T
-
-    # Project the existing low-rank covariance into the augmented subspace
-    proj = uhat_aug_tr @ basis
-    ext_s = (proj * core) @ proj.T
 
     # Compute the rank-one update in the augmented space
     path_aug = uhat_aug.T @ path_cov
@@ -1467,23 +1525,24 @@ def _adaptive_bug_step(
     steps_aug = steps_sorted @ uhat_aug
     rank_mu_term_s = steps_aug.T @ (weights_sorted_2d * steps_aug)
 
-    # Assemble the low-rank correlation velocity field
-    f_core = (
-        + lr_rank_one * rank_one_term_s
+    # Project the old covariance structure onto the augmented space
+    proj = uhat_aug_tr @ basis
+    ext_s = (proj * core) @ proj.T
+
+    # Apply the update to the augmented core matrix
+    shat = (
+        lr_rank_one * rank_one_term_s
         + lr_rank_mu * rank_mu_term_s
-        - lr_decay * ext_s
+        + (1.0 - lr_decay) * ext_s
         )
 
-    # Integrate the low-rank matrix flow
-    shat = ext_s + f_core
-
-    # Enforce symmetry
+    # Enforce the symmetry
     shat = 0.5 * (shat + shat.T)
 
-    # Extract the updated low-rank eigensystem
+    # Decompose the updated core matrix
     sigma, basis_sigma = eigh(shat)
 
-    # Sort the eigenvalues and -vectors
+    # Sort the eigenvalues and -vectors in descending order
     idx = argsort(sigma)[::-1]
     sigma = sigma[idx]
     basis_sigma = basis_sigma[:, idx]
@@ -1494,21 +1553,22 @@ def _adaptive_bug_step(
         # Initialize the rank delta
         rank_delta = 0
 
-        # Check if the rank should be expanded due to the evolutionary state
+        # Check if the rank should be expanded due to evolutionary signals
         if force_expansion:
 
-            # Increase the rank
-            rank_delta += 1
+            # Set the rank increment to one
+            rank_delta = 1
 
         else:
 
-            #
+            # Get the off-diagonal core matrix
             shat_off = shat - diag(diag(shat))
-            sigma_off, _ = eigh(shat_off)
-            idx = argsort(nabs(sigma_off))[::-1]
-            sigma_off = sigma_off[idx]
 
-            # Determine rank from retained covariance energy
+            # Calculate and sort the eigenvalues
+            sigma_off, _ = eigh(shat_off)
+            sigma_off = sort(nabs(sigma_off))[::-1]
+
+            # Determine the rank from the spectral energy
             rank_energy = _energy_rank_selection(
                 sigma_off, energy_fraction=1-low_rank_energy_tolerance,
                 min_rank=1
@@ -1517,26 +1577,35 @@ def _adaptive_bug_step(
             # Check if the proposed rank is smaller
             if rank_energy < rank:
 
-                # Reduce the rank delta
-                rank_delta -= 1
+                # Set the rank increment to minus one
+                rank_delta = -1
 
             # Check if the proposed rank is larger
             elif rank_energy > rank:
 
-                # Increase the rank delta
-                rank_delta += 1
+                # Set the rank increment to one
+                rank_delta = 1
 
-        # Clip the rank to the minimum/maximum allowed rank
+        # Change the rank within the allowed range
         rank_new = rank + rank_delta
         rank_new = max(1, min(rank_new, low_rank_max_dimension))
 
     else:
 
-        # Fix the rank
+        # Keep the current rank fixed
         rank_new = min(rank, low_rank_max_dimension)
 
-    # Truncate to the new rank
+    # Truncate the low-rank factors to the new rank
     basis_new = uhat_aug @ basis_sigma[:, :rank_new]
     core_new = sigma[:rank_new]
+
+    # Get the diagonal of the updated low-rank component
+    lr_diag_new = nsum(basis_new**2 * core_new, axis=1)
+
+    # Update psi by the residual diagonal
+    psi_new = lr_diag_upd - lr_diag_new
+
+    # Keep the residual diagonal strictly positive
+    psi_new = maximum(psi_new, 1e-15)
 
     return basis_new, core_new, psi_new, rank_new

@@ -4,11 +4,12 @@
 
 # %% External package import
 
-from numpy import diag_indices_from, mean, ndarray
-from numpy.linalg import eigvalsh, norm
+from numpy import mean, ndarray
+from numpy.linalg import norm
 
 # %% Internal package import
 
+from seamaze.optimizers._dlrcmaes import _lanczos_spectrum_extremes
 from seamaze.plotting import Visualizer
 
 # %% Class definition
@@ -186,12 +187,7 @@ class MonitorDLRCMAES:
             cov[0, 0] += solver._psi[0]
             cov[1, 1] += solver._psi[1]
 
-            # Reconstruct the singular values
-            # psi_projected = (solver._basis.T * solver._psi) @ solver._basis
-            # reduced_matrix = psi_projected.copy()
-            # reduced_matrix[diag_indices_from(reduced_matrix)] += solver._core
-            # dominant_svs = eigvalsh(reduced_matrix)
-            # self._svs = dominant_svs[::-1]
+            # Use the singular values from the core matrix
             self._svs = solver._core
 
             # Check if the interactive plot should be updated
@@ -231,9 +227,10 @@ class MonitorDLRCMAES:
             self._record('path_cov_norm', norm(solver._path_cov).item())
 
             # Record the covariance metrics
-            max_sv, min_sv = max(self._svs), min(self._svs)
-            self._record('cov_cn', (max_sv / (min_sv + 1e-12)).item())
-            self._record('cov_spectr_norm', max_sv.item())
+            max_sv, min_sv = _lanczos_spectrum_extremes(
+                solver._basis, solver._core, solver._psi)
+            self._record('cov_cn', (max_sv / (min_sv + 1e-15)))
+            self._record('cov_spectr_norm', max_sv)
 
             # Record the step size
             self._record('sigma', solver._sigma)

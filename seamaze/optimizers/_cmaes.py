@@ -347,20 +347,18 @@ class CMAES:
                 0.0, self._population - self.upper_variable_bounds
                 )
 
-            # Compute the total bound violation
-            bound_errors = eps_lower + eps_upper
+            # Compute the squared total bound errors
+            bound_errors_squared = (eps_lower + eps_upper) ** 2
 
             # Average the squared errors for each individual
-            self._mean_squared_bound_errors = nmean(bound_errors ** 2, axis=1)
+            self._mean_squared_bound_errors = nmean(
+                bound_errors_squared, axis=1)
 
             # Compute the relative severity of bound violations
-            bound_errors_squared = bound_errors ** 2
-            steps_squared = (self._sigma * self._steps) ** 2
-
             violation_severity = nmean(
                 nsum(bound_errors_squared, axis=1) /
                 (nsum(bound_errors_squared, axis=1) +
-                 nsum(steps_squared, axis=1) +
+                 nsum((self._sigma * self._steps) ** 2, axis=1) +
                  1e-15
                  )
                 ) ** 2
@@ -440,7 +438,7 @@ class CMAES:
             selection_fitness = true_fitness
 
         # Get the best unpenalized fitness
-        best_index = argmin(selection_fitness)
+        best_index = argmin(true_fitness)
         true_best_fitness = true_fitness[best_index]
 
         # Append the best (unpenalized) fitness to the history
@@ -498,13 +496,13 @@ class CMAES:
         self._sigma = sigma_new
         self._path_cov[:] = path_cov_new
 
-        # Check if the matrix factors should be updated
+        # Check if the covariance factors should be updated
         if self._opt_iter % self._update_interval == 0:
 
             # Get the steps sorted by fitness
             steps_sorted = self._steps[argsort(fitness)]
 
-            # Update the covariance matrix and its factors
+            # Update the covariance factors
             cov_new, root_cov_new, basis_new, core_new = _update_covariance(
                 self._basis,
                 self._core,
@@ -517,7 +515,7 @@ class CMAES:
                 update_switch
                 )
 
-            # Save the factor states
+            # Save the covariance state variables
             self._cov[:] = cov_new
             self._root_cov[:] = root_cov_new
             self._basis[:] = basis_new

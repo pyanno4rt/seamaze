@@ -333,20 +333,18 @@ class LMMAES:
                 0.0, self._population - self.upper_variable_bounds
                 )
 
-            # Compute the total bound violation
-            bound_errors = eps_lower + eps_upper
+            # Compute the squared total bound errors
+            bound_errors_squared = (eps_lower + eps_upper) ** 2
 
             # Average the squared errors for each individual
-            self._mean_squared_bound_errors = nmean(bound_errors ** 2, axis=1)
+            self._mean_squared_bound_errors = nmean(
+                bound_errors_squared, axis=1)
 
             # Compute the relative severity of bound violations
-            bound_errors_squared = bound_errors ** 2
-            steps_squared = (self._sigma * self._steps) ** 2
-
             violation_severity = nmean(
                 nsum(bound_errors_squared, axis=1) /
                 (nsum(bound_errors_squared, axis=1) +
-                 nsum(steps_squared, axis=1) +
+                 nsum((self._sigma * self._steps) ** 2, axis=1) +
                  1e-15
                  )
                 ) ** 2
@@ -426,7 +424,7 @@ class LMMAES:
             selection_fitness = true_fitness
 
         # Get the best unpenalized fitness
-        best_index = argmin(selection_fitness)
+        best_index = argmin(true_fitness)
         true_best_fitness = true_fitness[best_index]
 
         # Append the best (unpenalized) fitness to the history
