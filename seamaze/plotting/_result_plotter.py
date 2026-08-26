@@ -57,6 +57,7 @@ class ResultPlotter:
         self.show_cov_cn = True
         self.show_cov_spectr_norm = True
         self.show_rank = True
+        self.show_lr_contributions = True
 
     def _initialize_save_directory(
             self,
@@ -361,6 +362,61 @@ class ResultPlotter:
                 save_path=self._get_save_path('rank.pdf')
                 )
 
+    def plot_lr_contributions(self):
+        """Plot the low-rank contribution."""
+
+        # Check if the low-rank contributions should be plotted
+        if self.show_lr_contributions:
+
+            # Check if the low-rank contribution has been stored
+            if 'low_rank_contribution' in self.data:
+
+                # Plot the low-rank-to-covariance fractional norm
+                plot_series(
+                    series=self.data['low_rank_contribution'],
+                    head=None,
+                    semilog=False,
+                    title=f'Low-rank contribution ({self.label})',
+                    xlabel='Generation',
+                    ylabel='Value',
+                    ylim=(-0.02, 1.02),
+                    save_path=self._get_save_path('low_rank_contribution.pdf')
+                    )
+
+            # Check if the low-rank off-diagonal contribution has been stored
+            if 'low_rank_offdiag_contribution' in self.data:
+
+                # Plot the low-rank-to-covariance fractional norm
+                plot_series(
+                    series=self.data['low_rank_offdiag_contribution'],
+                    head=None,
+                    semilog=False,
+                    title=f'Low-rank off-diagonal contribution ({self.label})',
+                    xlabel='Generation',
+                    ylabel='Value',
+                    ylim=(-0.02, 1.02),
+                    save_path=self._get_save_path(
+                        'low_rank_offdiag_contribution.pdf'
+                        )
+                    )
+
+            # Check if the low-rank off-diagonal contribution has been stored
+            if 'low_rank_correlation_strength' in self.data:
+
+                # Plot the low-rank off-diagonal fractional norm
+                plot_series(
+                    series=self.data['low_rank_correlation_strength'],
+                    head=None,
+                    semilog=False,
+                    title=f'Low-rank correlation strength ({self.label})',
+                    xlabel='Generation',
+                    ylabel='Value',
+                    ylim=(-0.02, 1.02),
+                    save_path=self._get_save_path(
+                        'low_rank_correlation_strength.pdf'
+                        )
+                    )
+
     def plot_all(self):
         """Run all plotting methods."""
 
@@ -375,3 +431,4 @@ class ResultPlotter:
         self.plot_covariance_condition_number()
         self.plot_covariance_spectral_norm()
         self.plot_rank()
+        self.plot_lr_contributions()

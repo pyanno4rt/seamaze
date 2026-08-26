@@ -43,7 +43,7 @@ Available benchmark functions are:
 name = 'Rotated Ellipsoid'
 
 # Enter the problem dimensionality
-ndim = 100
+ndim = 1000
 
 # Get the benchmark function class
 problems = {

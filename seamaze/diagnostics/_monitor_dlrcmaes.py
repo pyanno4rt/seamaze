@@ -4,8 +4,9 @@
 
 # %% External package import
 
-from numpy import mean, ndarray
+from numpy import diag, maximum, mean, ndarray, sqrt
 from numpy.linalg import norm
+from numpy import sum as nsum
 
 # %% Internal package import
 
@@ -237,6 +238,34 @@ class MonitorDLRCMAES:
 
             # Record the integrator rank
             self._record('rank', solver.rank)
+
+            # Record the low-rank contribution
+            low_rank_term = (solver._basis * solver._core) @ solver._basis.T
+            lr_norm = norm(low_rank_term, 'fro')
+            cov_norm = norm(low_rank_term + diag(solver._psi), 'fro')
+            self._record('low_rank_contribution', lr_norm / cov_norm)
+
+            # Record the low-rank off-diagonal contribution
+            lr_diag = diag(low_rank_term)
+            if lr_norm > 0.0:
+                lr_offdiag_norm = sqrt(max(lr_norm**2 - nsum(lr_diag**2), 0.0))
+                offdiag_contribution = lr_offdiag_norm / lr_norm
+            else:
+                offdiag_contribution = 0.0
+            self._record('low_rank_offdiag_contribution', offdiag_contribution)
+
+            # Record the correlation strength
+            dim = solver._number_of_variables
+            std = sqrt(maximum(lr_diag, 1e-15))
+            low_rank_term /= std[:, None]
+            low_rank_term /= std[None, :]
+            correlation_off_norm_sq = (
+                norm(low_rank_term, 'fro')**2 - nsum(diag(low_rank_term)**2)
+                )
+            self._record(
+                'low_rank_correlation_strength',
+                sqrt(max(correlation_off_norm_sq, 0.0) / (dim * (dim - 1)))
+                )
 
             # Record the current expansion reasons
             self._record(

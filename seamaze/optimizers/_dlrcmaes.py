@@ -17,8 +17,8 @@ from numba import njit, types
 from numba.core.errors import NumbaPerformanceWarning
 from numpy import (
     add, arange, argmin, argsort, array, ascontiguousarray, asfortranarray,
-    ceil, clip, diag, exp, eye, float64, full, isinf, log, maximum, minimum,
-    ptp, ones, outer, sort, sqrt, where, zeros)
+    ceil, clip, diag, exp, eye, finfo, float64, full, isinf, log, maximum,
+    minimum, ptp, ones, outer, sort, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import max as nmax
 from numpy import mean as nmean
@@ -218,52 +218,6 @@ class DLRCMAES:
         # Initialize the elite size
         self._elite_size = int(nsum(base_weights > 0))
 
-        # Determine the sums of positive and negative base weights
-        bw_pos_sum = nsum(base_weights[:self._elite_size])
-        bw_neg_sum = nsum(base_weights[self._elite_size:])
-
-        # Initialize the variance effective selection mass
-        self._mu_eff = bw_pos_sum**2 / nsum(base_weights[:self._elite_size]**2)
-        mu_eff_neg = bw_neg_sum**2 / nsum(base_weights[self._elite_size:]**2)
-
-        # Initialize the learning rates
-        self._lr_sigma = (
-            (self._mu_eff + 2) / (self._number_of_variables + self._mu_eff + 5)
-            )
-        self._lr_cov = (
-            (4 + self._mu_eff / self._number_of_variables) /
-            (self._number_of_variables + 4
-             + 2 * self._mu_eff/self._number_of_variables)
-            )
-        self._lr_rank_one = (
-            2 / ((self._number_of_variables + 1.3)**2 + self._mu_eff)
-            )
-        self._lr_rank_mu = min(
-            1.0 - self._lr_rank_one,
-            2.0 * (
-                (0.25 + self._mu_eff + 1.0 / self._mu_eff - 2.0) /
-                ((self._number_of_variables + 2.0)**2
-                 + 2.0 * self._mu_eff / 2.0)
-                )
-            )
-        self._lr_mean = 1.0
-
-        # Determine the alpha values
-        alpha_mu_neg = 1.0 + self._lr_rank_one / (self._lr_rank_mu + 1e-12)
-        alpha_mu_eff_neg = 1.0 + (2.0 * mu_eff_neg) / (self._mu_eff + 2.0)
-        alpha_posdef_neg = (
-            (1.0 - self._lr_rank_one - self._lr_rank_mu)
-            / (self._number_of_variables * self._lr_rank_mu + 1e-12)
-            )
-        alpha_min = min(alpha_mu_neg, alpha_mu_eff_neg, alpha_posdef_neg)
-
-        # Set the weights
-        self._weights = where(
-            base_weights > 0,
-            (1.0 / bw_pos_sum) * base_weights,
-            (alpha_min / (abs(bw_neg_sum) + 1e-12)) * base_weights
-            ).reshape(-1, 1)
-
         # Get the low-rank adaptivity parameters
         default_rank = 1
 
@@ -289,6 +243,53 @@ class DLRCMAES:
 
         # Determine the integrator rank
         self.rank = self._low_rank_init_dimension
+
+        # Determine the sums of positive and negative base weights
+        bw_pos_sum = nsum(base_weights[:self._elite_size])
+        bw_neg_sum = nsum(base_weights[self._elite_size:])
+
+        # Initialize the variance effective selection mass
+        self._mu_eff = bw_pos_sum**2 / nsum(base_weights[:self._elite_size]**2)
+        mu_eff_neg = bw_neg_sum**2 / nsum(base_weights[self._elite_size:]**2)
+
+        # Initialize the learning rates
+        self._lr_sigma = (
+            (self._mu_eff + 2) / (self._number_of_variables + self._mu_eff + 5)
+            )
+        self._lr_cov = (
+            (4 + self._mu_eff / self._number_of_variables) /
+            (self._number_of_variables + 4
+             + 2 * self._mu_eff/self._number_of_variables)
+            )
+        self._lr_rank_one_base = (
+            2 / ((self._number_of_variables + 1.3)**2 + self._mu_eff)
+            )
+        self._lr_rank_mu_base = min(
+            1.0 - self._lr_rank_one_base,
+            2.0 * (
+                (0.25 + self._mu_eff + 1.0 / self._mu_eff - 2.0) /
+                ((self._number_of_variables + 2.0)**2
+                 + 2.0 * self._mu_eff / 2.0)
+                )
+            )
+        self._lr_rank_one, self._lr_rank_mu = self._get_learning_rates()
+        self._lr_mean = 1.0
+
+        # Determine the alpha values
+        alpha_mu_neg = 1.0 + self._lr_rank_one / (self._lr_rank_mu + 1e-12)
+        alpha_mu_eff_neg = 1.0 + (2.0 * mu_eff_neg) / (self._mu_eff + 2.0)
+        alpha_posdef_neg = (
+            (1.0 - self._lr_rank_one - self._lr_rank_mu)
+            / (self._number_of_variables * self._lr_rank_mu + 1e-12)
+            )
+        alpha_min = min(alpha_mu_neg, alpha_mu_eff_neg, alpha_posdef_neg)
+
+        # Set the weights
+        self._weights = where(
+            base_weights > 0,
+            (1.0 / bw_pos_sum) * base_weights,
+            (alpha_min / (abs(bw_neg_sum) + 1e-12)) * base_weights
+            ).reshape(-1, 1)
 
         # Initialize the damping coefficient
         self._damp_sigma = (
@@ -358,6 +359,25 @@ class DLRCMAES:
 
         # Initialize the stop flag
         self._stop_requested = False
+
+    def _get_learning_rates(self):
+        """
+        Get the learning rates depending on the rank.
+
+        Returns
+        -------
+        float
+            Rank-1 learning rate.
+
+        float
+            Rank-mu learning rate.
+        """
+
+        # Determine the scaling factor
+        beta = 0.0
+        factor = (self._number_of_variables / self.rank) ** beta
+
+        return factor * self._lr_rank_one_base, factor * self._lr_rank_mu_base
 
     def _get_update_interval(self):
         """
@@ -617,11 +637,18 @@ class DLRCMAES:
             self._psi[:] = psi_new
             self.rank = rank_new
 
-            # Check if the update interval should be adapted
-            if rank_new != rank_current and self._update_interval_user is None:
+            # Check if the rank has changed
+            if rank_new != rank_current:
 
-                # Refresh the update interval
-                self._update_interval = self._get_update_interval()
+                # Refresh the learning rates
+                (self._lr_rank_one,
+                 self._lr_rank_mu) = self._get_learning_rates()
+
+                # Check if no update interval has been passed
+                if self._update_interval_user is None:
+
+                    # Refresh the update interval
+                    self._update_interval = self._get_update_interval()
 
     def optimize(
             self,
@@ -903,8 +930,21 @@ class DLRCMAES:
                 self._psi
                 )
 
-            # Check if any eigenvalue is zero or the condition number explodes
-            if min_eval < 1e-14 or (max_eval / (min_eval + 1e-15)) >= 1e14:
+            # Reference the floor and the condition-number bound off the
+            # current largest eigenvalue and double-precision machine
+            # epsilon, rather than fixed absolute constants -- a
+            # legitimately well-adapted, highly anisotropic shape (small
+            # psi relative to a large max_eval) should not be confused
+            # with numerical breakdown of the shape matrix itself
+            machine_eps = finfo(float64).eps
+            eigenvalue_floor = max_eval * machine_eps
+
+            # Check if any eigenvalue is (relatively) zero or the
+            # condition number has reached the precision limit of float64
+            if (max_eval <= 0.0
+                    or min_eval < eigenvalue_floor
+                    or max_eval / (min_eval + eigenvalue_floor)
+                    >= 1.0 / machine_eps):
 
                 # Add the solver info
                 self._result['solver_info'] = 'MAX_COND_NUM_EXCEEDED'

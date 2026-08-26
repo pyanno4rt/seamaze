@@ -12,7 +12,7 @@ from numpy import asarray, clip, log1p
 
 def plot_series(
         series, head=None, semilog=False, title='', xlabel='', ylabel='',
-        save_path=None):
+        xlim=None, ylim=None, save_path=None):
     """
     Plot a 1-D series.
 
@@ -35,6 +35,12 @@ def plot_series(
 
     ylabel : str, default=''
         The y-axis label to be displayed.
+
+    xlim : tuple, default=None
+        The x-axis limits.
+
+    ylim : tuple, default=None
+        The y-axis limits.
 
     save_path : None or str, default=None
         The file path where the figure should be saved.
@@ -82,6 +88,13 @@ def plot_series(
         ax.set_ylabel(
             f"{ylabel} (log scale)" if semilog else ylabel, fontsize=10
             )
+
+        # Set the axis limits
+        if xlim is not None:
+            ax.set_xlim(xlim)
+
+        if ylim is not None:
+            ax.set_ylim(ylim)
 
         # Set the tick params
         ax.tick_params(axis='both', labelsize=9)

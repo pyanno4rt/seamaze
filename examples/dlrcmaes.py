@@ -43,7 +43,7 @@ Available benchmark functions are:
 name = 'Rotated Ellipsoid'
 
 # Enter the problem dimensionality
-ndim = 1000
+ndim = 100
 
 # Get the benchmark function class
 problems = {
@@ -84,7 +84,7 @@ with MonitorDLRCMAES(
         low_rank_max_dimension=None,
         low_rank_is_adaptive=True,
         low_rank_energy_tolerance=1e-2,
-        maximum_iterations=1000000,
+        maximum_iterations=10000000,
         maximum_wall_time=43200,
         fitness_threshold=None,
         fitness_window_size=50,
@@ -97,7 +97,7 @@ with MonitorDLRCMAES(
         )
 
     # Optimize the decision variables
-    result = solver.optimize(array([3.0]*problem.ndim))
+    result = solver.optimize(array([100.0]*problem.ndim))
 
     # Initialize the result plotter (optional)
     plotter = ResultPlotter(
@@ -114,7 +114,8 @@ with MonitorDLRCMAES(
     plotter.show_cov_svs = True
     plotter.show_cov_cn = True
     plotter.show_cov_spectr_norm = True
-    plotter.show_integrator_rank = True
+    plotter.show_rank = True
+    plotter.show_lr_contributions = True
 
     # Plot all selected results
     # plotter.plot_all()
