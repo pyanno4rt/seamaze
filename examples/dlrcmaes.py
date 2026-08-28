@@ -97,7 +97,7 @@ with MonitorDLRCMAES(
         )
 
     # Optimize the decision variables
-    result = solver.optimize(array([100.0]*problem.ndim))
+    result = solver.optimize(array([3.0]*problem.ndim))
 
     # Initialize the result plotter (optional)
     plotter = ResultPlotter(

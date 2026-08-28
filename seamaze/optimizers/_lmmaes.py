@@ -340,17 +340,17 @@ class LMMAES:
             self._mean_squared_bound_errors = nmean(
                 bound_errors_squared, axis=1)
 
-            # Compute the relative severity of bound violations
-            violation_severity = nmean(
-                nsum(bound_errors_squared, axis=1) /
-                (nsum(bound_errors_squared, axis=1) +
-                 nsum((self._sigma * self._steps) ** 2, axis=1) +
-                 1e-15
-                 )
-                ) ** 2
-
             # Check if the penalty factor has been initialized
             if self._gamma is not None:
+
+                # Compute the relative severity of bound violations
+                violation_severity = nmean(
+                    nsum(bound_errors_squared, axis=1) /
+                    (nsum(bound_errors_squared, axis=1) +
+                     nsum((self._sigma * self._steps) ** 2, axis=1) +
+                     1e-15
+                     )
+                    ) ** 2
 
                 # Compute the gamma factor
                 gamma_factor = (
@@ -454,11 +454,14 @@ class LMMAES:
             Fitness values of the new population.
         """
 
+        # Get the fitness sorting indices
+        sorting = argsort(fitness)
+
         # Update the state variables
         path_sigma_new, mean_new, sigma_new, memory_new = _tell(
-            fitness,
             self._zsamples,
             self._steps,
+            sorting,
             self._weights,
             self._path_sigma,
             self._mean,
@@ -709,6 +712,7 @@ f8_2d_c = types.float64[:, ::1]
 f8_1d = types.float64[:]
 f8_1d_c = types.float64[::1]
 f8 = types.float64
+i8_1d = types.int64[:]
 i8 = types.int64
 
 @njit(
@@ -777,9 +781,9 @@ def _transform_steps(steps, memory, lr_mem, num_iter):
 @njit(
       types.Tuple((f8_1d, f8_1d, f8, f8_2d))(
         # Return: path_sigma, mean, sigma, memory
-        f8_1d,          # fitness
         f8_2d,          # zsamples
         f8_2d,          # steps
+        i8_1d,          # sorting
         f8_2d,          # weights
         f8_1d,          # path_sigma
         f8_1d,          # mean
@@ -797,14 +801,13 @@ def _transform_steps(steps, memory, lr_mem, num_iter):
     fastmath=True
     )
 def _tell(
-    fitness, zsamples, steps, elite_weights, path_sigma, mean, sigma, memory,
+    zsamples, steps, sorting, elite_weights, path_sigma, mean, sigma, memory,
     lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma, expected_path_length,
     elite_size, memory_size):
     """Update the state variables."""
 
     # Get the elite indices
-    sorted_indices = argsort(fitness)
-    elite_indices = sorted_indices[:elite_size]
+    elite_indices = sorting[:elite_size]
 
     # Initialize the elite mean step
     elite_mean_step = nsum(

@@ -354,17 +354,17 @@ class CMAES:
             self._mean_squared_bound_errors = nmean(
                 bound_errors_squared, axis=1)
 
-            # Compute the relative severity of bound violations
-            violation_severity = nmean(
-                nsum(bound_errors_squared, axis=1) /
-                (nsum(bound_errors_squared, axis=1) +
-                 nsum((self._sigma * self._steps) ** 2, axis=1) +
-                 1e-15
-                 )
-                ) ** 2
-
             # Check if the penalty factor has been initialized
             if self._gamma is not None:
+
+                # Compute the relative severity of bound violations
+                violation_severity = nmean(
+                    nsum(bound_errors_squared, axis=1) /
+                    (nsum(bound_errors_squared, axis=1) +
+                     nsum((self._sigma * self._steps) ** 2, axis=1) +
+                     1e-15
+                     )
+                    ) ** 2
 
                 # Compute the gamma factor
                 gamma_factor = (
@@ -468,11 +468,14 @@ class CMAES:
             Fitness values of the new population.
         """
 
+        # Get the fitness sorting indices
+        sorting = argsort(fitness)
+
         # Update the state variables
         (path_sigma_new, mean_new, sigma_new, path_cov_new, update_switch
          ) = _tell(
-            fitness,
             self._steps,
+            sorting,
             self._weights,
             self._basis,
             self._core,
@@ -499,14 +502,12 @@ class CMAES:
         # Check if the covariance factors should be updated
         if self._opt_iter % self._update_interval == 0:
 
-            # Get the steps sorted by fitness
-            steps_sorted = self._steps[argsort(fitness)]
-
             # Update the covariance factors
             cov_new, root_cov_new, basis_new, core_new = _update_covariance(
                 self._basis,
                 self._core,
-                steps_sorted,
+                self._steps,
+                sorting,
                 self._weights,
                 self._path_cov,
                 self._lr_cov,
@@ -736,13 +737,14 @@ f8_2d = types.float64[:, :]
 f8_2d_f = types.float64[::1, :]
 f8_1d = types.float64[:]
 f8 = types.float64
+i8_1d = types.int64[:]
 i8 = types.int64
 
 @njit(
     types.Tuple((f8_1d, f8_1d, f8, f8_1d, f8))(
         # Return: path_sigma, mean, sigma, path_cov, update_switch
-        f8_1d,          # fitness
         f8_2d,          # steps
+        i8_1d,          # sorting
         f8_2d,          # weights
         f8_2d,          # basis
         f8_1d,          # core
@@ -762,14 +764,13 @@ i8 = types.int64
     fastmath=True
     )
 def _tell(
-    fitness, steps, weights, basis, core, path_sigma, path_cov, mean, sigma,
+    steps, sorting, weights, basis, core, path_sigma, path_cov, mean, sigma,
     lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma, expected_path_length,
     opt_iter, elite_size):
     """Update the state variables."""
 
     # Get the elite indices
-    sorted_indices = argsort(fitness)
-    elite_indices = sorted_indices[:elite_size]
+    elite_indices = sorting[:elite_size]
 
     # Initialize the elite mean step
     elite_weights = weights[:elite_size]
@@ -832,7 +833,8 @@ def _tell(
         # Return: cov_new, root_cov_new, basis_new, core_new
         f8_2d,          # basis
         f8_1d,          # core
-        f8_2d,          # steps_sorted
+        f8_2d,          # steps
+        i8_1d,          # sorting
         f8_2d,          # weights
         f8_1d,          # path_cov
         f8,             # lr_cov
@@ -843,12 +845,15 @@ def _tell(
     fastmath=True
     )
 def _update_covariance(
-    basis, core, steps_sorted, weights, path_cov, lr_cov, lr_rank_one,
+    basis, core, steps, sorting, weights, path_cov, lr_cov, lr_rank_one,
     lr_rank_mu, update_switch):
     """Update the covariance matrix."""
 
     # Get the search space dimension
     dim = basis.shape[0]
+
+    # Get the sorted steps
+    steps_sorted = steps[sorting]
 
     # Get the adjusted rank-1 learning rate
     lr_rank_one_adj = (1.0-update_switch) * lr_rank_one * lr_cov * (2.0-lr_cov)
@@ -899,7 +904,7 @@ def _update_covariance(
     basis_new[:] = basis_new[:, ::-1]
 
     # Clip the singular values
-    core_new = maximum(core_new, 1e-12)
+    core_new = maximum(core_new, 1e-15)
 
     # Update the sampling matrix
     sqrt_core = sqrt(core_new)

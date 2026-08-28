@@ -16,9 +16,9 @@ from math import inf
 from numba import njit, types
 from numba.core.errors import NumbaPerformanceWarning
 from numpy import (
-    add, arange, argmin, argsort, array, ascontiguousarray, asfortranarray,
-    ceil, clip, diag, exp, eye, finfo, float64, full, isinf, log, maximum,
-    minimum, ptp, ones, outer, sort, sqrt, where, zeros)
+    arange, argmin, argsort, array, ascontiguousarray, asfortranarray, ceil,
+    clip, diag, exp, eye, finfo, float64, full, isinf, log, maximum, minimum,
+    ptp, ones, outer, sort, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import max as nmax
 from numpy import mean as nmean
@@ -41,7 +41,7 @@ warnings.filterwarnings("ignore", category=NumbaPerformanceWarning)
 
 class DLRCMAES:
     """
-    Dynamical low-rank covariance matrix adaptation evolution strategy \
+    Dynamical low-rank covariance matrix adaptation evolution strategy
     (DLR-CMA-ES) class.
 
     This class implements the novel DLR-CMA-ES algorithm, introduced in our
@@ -108,21 +108,21 @@ class DLRCMAES:
         optimization stops (success criterion).
 
     fitness_window_size : int, default=50
-        Number of past iterations to consider for the fitness range
-        stagnation check.
+        Number of past iterations to consider for the fitness range stagnation
+        check.
 
     tolerance : float, default=1e-6
         Absolute and relative termination tolerance: stops if the change in
         fitness range over `fitness_window_size` is below this value.
 
     sigma_threshold : float, default=1e-8
-        Minimum allowed step size. If the step size falls below this limit, \
+        Minimum allowed step size. If the step size falls below this limit,
         optimization stops (convergence/collapse criterion).
 
     update_interval : int, default=None
         Frequency of the covariance update (in generations). Larger values
-        (e.g. 10) can significantly speed up the algorithm for
-        high-dimensional problems. Defaults to
+        (e.g. 10) can significantly speed up the algorithm for high-dimensional
+        problems. Defaults to
 
             ceil(sqrt(rank/(n*lr_cov))),
 
@@ -134,8 +134,8 @@ class DLRCMAES:
         Minimum logging level for passing messages to the console.
 
     callback : Callable[[DLRCMAES], None], default=None
-        Optional function called at the end of each iteration. Must accept
-        the solver instance.
+        Optional function called at the end of each iteration. Must accept the
+        solver instance.
 
     random_state : int, default=42
         Control seed for the internal random number generator.
@@ -276,11 +276,11 @@ class DLRCMAES:
         self._lr_mean = 1.0
 
         # Determine the alpha values
-        alpha_mu_neg = 1.0 + self._lr_rank_one / (self._lr_rank_mu + 1e-12)
+        alpha_mu_neg = 1.0 + self._lr_rank_one / (self._lr_rank_mu + 1e-15)
         alpha_mu_eff_neg = 1.0 + (2.0 * mu_eff_neg) / (self._mu_eff + 2.0)
         alpha_posdef_neg = (
             (1.0 - self._lr_rank_one - self._lr_rank_mu)
-            / (self._number_of_variables * self._lr_rank_mu + 1e-12)
+            / (self._number_of_variables * self._lr_rank_mu + 1e-15)
             )
         alpha_min = min(alpha_mu_neg, alpha_mu_eff_neg, alpha_posdef_neg)
 
@@ -288,7 +288,7 @@ class DLRCMAES:
         self._weights = where(
             base_weights > 0,
             (1.0 / bw_pos_sum) * base_weights,
-            (alpha_min / (abs(bw_neg_sum) + 1e-12)) * base_weights
+            (alpha_min / (abs(bw_neg_sum) + 1e-15)) * base_weights
             ).reshape(-1, 1)
 
         # Initialize the damping coefficient
@@ -419,45 +419,60 @@ class DLRCMAES:
         # Check if a gradient has been provided
         if self.gradient is not None:
 
-            # Compute the gradient
-            gradient = self.gradient(self._mean)
-
-            # Compute the unscaled natural gradient
-            low_rank_gradient = (
-                self._basis @ (self._core * (self._basis.T @ gradient))
-                )
-            natural_gradient = low_rank_gradient + self._psi * gradient
-
-            # Compute the rescaling factor
-            rescale = 1.0 / (sqrt(gradient @ natural_gradient) + 1e-15)
-
-            # Compute the natural gradient step
-            gradient_step = natural_gradient * rescale
-
-            # Add the mirrored gradient steps
-            self._steps[-2] = -gradient_step
-            self._steps[-1] = gradient_step
+            # Add the gradient steps
+            self._add_gradient_steps()
 
         # Sample the new population
-        add(self._mean, self._sigma * self._steps, out=self._population)
+        self._population[:] = self._mean + self._sigma * self._steps
 
         # Check if the decision variables are bounded
         if self._is_bound:
 
-            # Compute the distance to the lower and upper bounds
-            eps_lower = maximum(
-                0.0, self.lower_variable_bounds - self._population
-                )
-            eps_upper = maximum(
-                0.0, self._population - self.upper_variable_bounds
-                )
+            # Repair the population
+            self._repair_population()
 
-            # Compute the squared total bound errors
-            bound_errors_squared = (eps_lower + eps_upper) ** 2
+    def _add_gradient_steps(self):
+        """Add the mirrored gradient steps."""
 
-            # Average the squared errors for each individual
-            self._mean_squared_bound_errors = nmean(
-                bound_errors_squared, axis=1)
+        # Compute the gradient
+        gradient = self.gradient(self._mean)
+
+        # Compute the unscaled natural gradient
+        low_rank_gradient = (
+            self._basis @ (self._core * (self._basis.T @ gradient))
+            )
+        natural_gradient = low_rank_gradient + self._psi * gradient
+
+        # Compute the rescaling factor
+        rescale = 1.0 / (sqrt(gradient @ natural_gradient) + 1e-15)
+
+        # Compute the natural gradient step
+        gradient_step = natural_gradient * rescale
+
+        # Add the mirrored gradient steps
+        self._steps[-2] = -gradient_step
+        self._steps[-1] = gradient_step
+
+    def _repair_population(self):
+        """Repair the population and update the penalty term."""
+
+        # Compute the distance to the lower and upper bounds
+        eps_lower = maximum(
+            0.0, self.lower_variable_bounds - self._population
+            )
+        eps_upper = maximum(
+            0.0, self._population - self.upper_variable_bounds
+            )
+
+        # Compute the squared total bound errors
+        bound_errors_squared = (eps_lower + eps_upper) ** 2
+
+        # Average the squared errors for each individual
+        self._mean_squared_bound_errors = nmean(
+            bound_errors_squared, axis=1)
+
+        # Check if the penalty factor has been initialized
+        if self._gamma is not None:
 
             # Compute the relative severity of bound violations
             violation_severity = nmean(
@@ -468,36 +483,34 @@ class DLRCMAES:
                  )
                 ) ** 2
 
-            # Check if the penalty factor has been initialized
-            if self._gamma is not None:
-
-                # Compute the gamma factor
-                gamma_factor = (
-                    1.001 ** violation_severity *
-                    0.999 ** (1.0 - violation_severity)
-                    )
-
-                # Adapt the penalty factor
-                self._gamma = clip(self._gamma * gamma_factor, 1e-5, 1e10)
-
-            # Get the relative step size
-            sigma_rel = self._sigma / (1 + self._sigma)
-
-            # Mirror the violating individuals back into the feasible region
-            self._population[:] = where(
-                self._population < self.lower_variable_bounds,
-                self.lower_variable_bounds + sigma_rel * eps_lower,
-                self._population
-                )
-            self._population[:] = where(
-                self._population > self.upper_variable_bounds,
-                self.upper_variable_bounds - sigma_rel * eps_upper,
-                self._population
+            # Compute the gamma factor
+            gamma_factor = (
+                1.001 ** violation_severity *
+                0.999 ** (1.0 - violation_severity)
                 )
 
-            # Enforce hard constraints to avoid numerical round-off errors
-            clip(self._population, a_min=self.lower_variable_bounds,
-                 a_max=self.upper_variable_bounds, out=self._population)
+            # Adapt the penalty factor
+            self._gamma = clip(self._gamma * gamma_factor, 1e-5, 1e10)
+
+        # Get the relative step size
+        sigma_rel = self._sigma / (1 + self._sigma)
+
+        # Mirror the violating individuals back into the feasible region
+        self._population[:] = where(
+            self._population < self.lower_variable_bounds,
+            self.lower_variable_bounds + sigma_rel * eps_lower,
+            self._population
+            )
+        self._population[:] = where(
+            self._population > self.upper_variable_bounds,
+            self.upper_variable_bounds - sigma_rel * eps_upper,
+            self._population
+            )
+
+        # Enforce hard constraints to avoid numerical round-off errors
+        self._population[:] = clip(
+            self._population, a_min=self.lower_variable_bounds,
+            a_max=self.upper_variable_bounds)
 
     def evaluate(self):
         """
@@ -525,7 +538,7 @@ class DLRCMAES:
             if self._gamma is None:
 
                 # Compute the unpenalized fitness range
-                fitness_range = nmax(true_fitness) - nmin(true_fitness)
+                fitness_range = ptp(true_fitness)
 
                 # Scale the penalty factor to the fitness range
                 self._gamma = (
@@ -573,11 +586,14 @@ class DLRCMAES:
             Fitness values of the new population.
         """
 
+        # Get the fitness sorting indices
+        sorting = argsort(fitness)
+
         # Update the state variables
         (path_sigma_new, mean_new, sigma_new, path_cov_new, update_switch
          ) = _tell(
-            fitness,
             self._steps,
+            sorting,
             self._weights,
             self._basis,
             self._core,
@@ -608,15 +624,13 @@ class DLRCMAES:
             # Get the current rank
             rank_current = self.rank
 
-            # Get the steps sorted by fitness
-            steps_sorted = self._steps[argsort(fitness)]
-
             # Update the covariance factors
             basis_new, core_new, psi_new, rank_new = _adaptive_bug_step(
                 self._basis,
                 self._core,
                 self._psi,
-                steps_sorted,
+                self._steps,
+                sorting,
                 self._weights,
                 self._path_cov,
                 self._lr_cov,
@@ -627,7 +641,7 @@ class DLRCMAES:
                 self._low_rank_energy_tolerance,
                 update_switch=update_switch,
                 force_expansion=self.check_rank_expansion(
-                    steps_sorted[:self._elite_size, :]
+                    self._steps[sorting][:self._elite_size, :]
                     )
                 )
 
@@ -674,7 +688,7 @@ class DLRCMAES:
         if initial_mean is not None:
 
             # Set the initial mean
-            self._mean = initial_mean.astype(float)
+            self._mean = array(initial_mean, dtype=float64, copy=True)
 
         # Get the previous signal handler
         old_handler = getsignal(SIGINT)
@@ -784,11 +798,6 @@ class DLRCMAES:
 
             return False
 
-        # Initialize the expansion pressure flags
-        path_pressure = False
-        steps_pressure = False
-        fitness_pressure = False
-
         # Initialize the expansion reasons
         reasons = []
 
@@ -812,14 +821,14 @@ class DLRCMAES:
         # Get the ratio of explained versus expected energy
         path_ratio = path_explained_ratio / (expected_explained_ratio + 1e-15)
 
-        # Check if the ratio is smaller than 80%
-        if path_ratio < 0.8:
+        # Convert the relative path explanation into expansion pressure
+        path_pressure = max(0.0, 1.0 - path_ratio)
 
-            # Set the path pressure flag
-            path_pressure = True
+        # Check if the path pressure is above zero
+        if path_pressure > 0.0:
 
             # Add the expansion reason
-            reasons.append('path_excess_residual')
+            reasons.append('path_underrepresentation')
 
         # Project the elite steps into the current low-rank subspace
         elite_coords = elite_steps @ self._basis
@@ -844,14 +853,17 @@ class DLRCMAES:
             elite_explained_ratio / (expected_explained_ratio + 1e-15)
             )
 
-        # Check if the ratio is smaller than 80%
-        if elite_ratio < 0.8:
+        # Convert the relative elite-step explanation into expansion pressure
+        elite_pressure = max(0.0, 1.0 - elite_ratio)
 
-            # Set the steps pressure flag
-            steps_pressure = True
+        # Check if the elite pressure is above zero
+        if elite_pressure > 0.0:
 
             # Add the expansion reason
-            reasons.append('steps_excess_residual')
+            reasons.append('steps_underrepresentation')
+
+        # Initialize the fitness pressure
+        fitness_pressure = 0.0
 
         # Check if the fitness history has been completely filled
         if len(self._fitness_history) == self._fitness_history.maxlen:
@@ -869,11 +881,16 @@ class DLRCMAES:
             # Get the fitness range
             fit_range = ptp(history)
 
-            # Check if the fitness improvement is reasonably small
-            if (fit_old - fit_new) / (fit_range + 1e-15) < 1e-2:
+            # Compute the normalized fitness improvement
+            fitness_improvement = (
+                (fit_old - fit_new) / (fit_range + 1e-15)
+                )
 
-                # Set the fitness pressure flag
-                fitness_pressure = True
+            # Convert the fitness improvement into stagnation pressure
+            fitness_pressure = clip(1.0 - fitness_improvement / 1e-2, 0.0, 1.0)
+
+            # Check if the fitness pressure is above zero
+            if fitness_pressure > 0.0:
 
                 # Add the expansion reason
                 reasons.append('fitness_stagnation')
@@ -881,7 +898,12 @@ class DLRCMAES:
         # Update the current expansion reasons
         self._current_expansion_reasons = reasons
 
-        return (path_pressure + steps_pressure + fitness_pressure) >= 2
+        return (
+            0.45 * path_pressure
+            + 0.45 * elite_pressure
+            + 0.1 * fitness_pressure
+            >= 0.2
+            )
 
     def check_termination(self):
         """
@@ -925,22 +947,14 @@ class DLRCMAES:
 
             # Approximate the maximum and minimum eigenvalue
             max_eval, min_eval = _lanczos_spectrum_extremes(
-                self._basis,
-                self._core,
-                self._psi
+                self._basis, self._core, self._psi
                 )
 
-            # Reference the floor and the condition-number bound off the
-            # current largest eigenvalue and double-precision machine
-            # epsilon, rather than fixed absolute constants -- a
-            # legitimately well-adapted, highly anisotropic shape (small
-            # psi relative to a large max_eval) should not be confused
-            # with numerical breakdown of the shape matrix itself
+            # Get the machine precision and derive an eigenvalue floor
             machine_eps = finfo(float64).eps
             eigenvalue_floor = max_eval * machine_eps
 
-            # Check if any eigenvalue is (relatively) zero or the
-            # condition number has reached the precision limit of float64
+            # Check if the condition number criterion is violated
             if (max_eval <= 0.0
                     or min_eval < eigenvalue_floor
                     or max_eval / (min_eval + eigenvalue_floor)
@@ -1081,7 +1095,7 @@ def _lanczos_spectrum_extremes(basis, core, psi):
             beta[index + 1] = beta_next
 
             # Check for "happy breakdown" (exact solution found)
-            if beta_next < 1e-12:
+            if beta_next < 1e-15:
 
                 # Set the current dimensionality to the final index
                 current_dim = index + 1
@@ -1201,7 +1215,7 @@ def _lanczos_inverse_sqrt_product(elite_mean_step, basis, core, psi):
             beta[index + 1] = beta_next
 
             # Check for "happy breakdown" (exact solution found)
-            if beta_next < 1e-12:
+            if beta_next < 1e-15:
 
                 # Set the current dimensionality to the final index
                 current_dim = index + 1
@@ -1229,7 +1243,7 @@ def _lanczos_inverse_sqrt_product(elite_mean_step, basis, core, psi):
     lambda_max = tridiagonal_evals[-1]
 
     # Apply a relative eigenvalue floor for numerical stability
-    threshold = max(1e-15, 1e-12 * lambda_max)
+    threshold = max(1e-15, finfo(float64).eps * lambda_max * lambda_max)
 
     # Safeguard the projected spectrum against non-positive Ritz values
     tridiagonal_evals = maximum(tridiagonal_evals, threshold)
@@ -1253,8 +1267,8 @@ def _lanczos_inverse_sqrt_product(elite_mean_step, basis, core, psi):
 @njit(
     types.Tuple((f8_1d, f8_1d, f8, f8_1d, f8))(
         # Return: Tuple(path_sigma, mean, sigma, path_cov, update_switch)
-        f8_1d,          # fitness
         f8_2d,          # steps
+        i8_1d,          # sorting
         f8_2d,          # weights
         f8_2d,          # basis
         f8_1d,          # core
@@ -1275,14 +1289,13 @@ def _lanczos_inverse_sqrt_product(elite_mean_step, basis, core, psi):
     fastmath=True
     )
 def _tell(
-    fitness, steps, weights, basis, core, psi, path_sigma, path_cov, mean,
+    steps, sorting, weights, basis, core, psi, path_sigma, path_cov, mean,
     sigma, lr_sigma, lr_cov, lr_mean, mu_eff, damp_sigma, expected_path_length,
     opt_iter, elite_size):
     """Update the state variables."""
 
     # Get the elite indices
-    sorted_indices = argsort(fitness)
-    elite_indices = sorted_indices[:elite_size]
+    elite_indices = sorting[:elite_size]
 
     # Initialize the elite mean step
     elite_weights = weights[:elite_size]
@@ -1315,9 +1328,12 @@ def _tell(
         sigma = 1e-15
 
     # Compute the update switch for the covariance evolution path
+    ps_norm_scale = sqrt(
+        maximum(1.0 - (1.0 - lr_sigma)**(2.0 * opt_iter), 1e-15)
+        )
     update_switch = (
         1.0
-        if ps_norm / sqrt(1.0 - (1.0 - lr_sigma)**(2.0 * opt_iter))
+        if ps_norm / ps_norm_scale
         < (1.4 + 2.0 / (mean.size + 1.0)) * expected_path_length
         else 0.0
         )
@@ -1385,7 +1401,8 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
         f8_2d,          # basis
         f8_1d,          # core
         f8_1d,          # psi
-        f8_2d,          # steps_sorted
+        f8_2d,          # steps
+        i8_1d,          # sorting
         f8_2d,          # weights
         f8_1d,          # path_cov
         f8,             # lr_cov
@@ -1400,14 +1417,14 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
     fastmath=True
     )
 def _adaptive_bug_step(
-    basis, core, psi, steps_sorted, weights, path_cov, lr_cov, lr_rank_one,
+    basis, core, psi, steps, sorting, weights, path_cov, lr_cov, lr_rank_one,
     lr_rank_mu, low_rank_max_dimension, low_rank_is_adaptive,
     low_rank_energy_tolerance, update_switch, force_expansion):
     """Perform an update step of the adaptive BUG integrator."""
 
     # Ensure array layouts
     basis = asfortranarray(basis)
-    steps_sorted = ascontiguousarray(steps_sorted)
+    steps_sorted = ascontiguousarray(steps[sorting])
 
     # Get the problem dimensionality and current rank
     dim, rank = basis.shape
@@ -1545,7 +1562,7 @@ def _adaptive_bug_step(
         vector_norm = norm(vector)
 
         # Check if the norm is sufficiently small
-        if vector_norm > 1e-12:
+        if vector_norm > 1e-15:
 
             # Add the normalized vector
             k_aug[:, rank + n_added] = vector / vector_norm
@@ -1554,7 +1571,7 @@ def _adaptive_bug_step(
             n_added += 1
 
     # Compute an orthonormal basis of the augmented low-rank directions
-    uhat_aug, _ = qr(k_aug)
+    uhat_aug, _ = qr(k_aug[:, :rank + n_added])
     uhat_aug_tr = uhat_aug.T
 
     # Compute the rank-one update in the augmented space
@@ -1583,9 +1600,8 @@ def _adaptive_bug_step(
     sigma, basis_sigma = eigh(shat)
 
     # Sort the eigenvalues and -vectors in descending order
-    idx = argsort(sigma)[::-1]
-    sigma = sigma[idx]
-    basis_sigma = basis_sigma[:, idx]
+    sigma = sigma[::-1]
+    basis_sigma = basis_sigma[:, ::-1]
 
     # Check if the rank should be adapted
     if low_rank_is_adaptive:

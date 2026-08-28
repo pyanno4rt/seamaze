@@ -40,10 +40,10 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Rotated Ellipsoid'
+name = 'Sphere'
 
 # Enter the problem dimensionality
-ndim = 1000
+ndim = 100
 
 # Get the benchmark function class
 problems = {
@@ -80,7 +80,7 @@ with MonitorCMAES(
         # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        maximum_iterations=100000,
+        maximum_iterations=10000000,
         maximum_wall_time=43200,
         fitness_threshold=None,
         fitness_window_size=50,
