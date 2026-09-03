@@ -17,8 +17,8 @@ from numba import njit, types
 from numba.core.errors import NumbaPerformanceWarning
 from numpy import (
     arange, argmin, argsort, array, ascontiguousarray, asfortranarray, ceil,
-    clip, diag, exp, eye, finfo, float64, full, isinf, log, maximum, minimum,
-    ptp, ones, outer, sort, sqrt, where, zeros)
+    clip, diag, exp, eye, finfo, float64, full, hstack, isinf, log, maximum,
+    minimum, ptp, ones, outer, sort, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import max as nmax
 from numpy import mean as nmean
@@ -256,7 +256,7 @@ class DLRCMAES:
         self._lr_sigma = (
             (self._mu_eff + 2) / (self._number_of_variables + self._mu_eff + 5)
             )
-        self._lr_cov = (
+        self._lr_cov_base = (
             (4 + self._mu_eff / self._number_of_variables) /
             (self._number_of_variables + 4
              + 2 * self._mu_eff/self._number_of_variables)
@@ -272,7 +272,8 @@ class DLRCMAES:
                  + 2.0 * self._mu_eff / 2.0)
                 )
             )
-        self._lr_rank_one, self._lr_rank_mu = self._get_learning_rates()
+        (self._lr_cov, self._lr_rank_one,
+         self._lr_rank_mu) = self._get_learning_rates()
         self._lr_mean = 1.0
 
         # Determine the alpha values
@@ -367,6 +368,9 @@ class DLRCMAES:
         Returns
         -------
         float
+            Covariance learning rate.
+
+        float
             Rank-1 learning rate.
 
         float
@@ -377,7 +381,12 @@ class DLRCMAES:
         beta = 0.0
         factor = (self._number_of_variables / self.rank) ** beta
 
-        return factor * self._lr_rank_one_base, factor * self._lr_rank_mu_base
+        # Get the scaled learning rates
+        lr_cov = factor * self._lr_cov_base
+        lr_rank_one = factor * self._lr_rank_one_base
+        lr_rank_mu = factor * self._lr_rank_mu_base
+
+        return lr_cov, lr_rank_one, lr_rank_mu
 
     def _get_update_interval(self):
         """
@@ -655,7 +664,7 @@ class DLRCMAES:
             if rank_new != rank_current:
 
                 # Refresh the learning rates
-                (self._lr_rank_one,
+                (self._lr_cov, self._lr_rank_one,
                  self._lr_rank_mu) = self._get_learning_rates()
 
                 # Check if no update interval has been passed
@@ -1492,13 +1501,6 @@ def _adaptive_bug_step(
     # Get the decay rate
     lr_decay = lr_rank_one + lr_rank_mu - lr_rank_one_adj
 
-    # Compute the rank-one update
-    rank_one_term_u = path_cov[:, None] * (path_cov @ basis)
-
-    # Compute the rank-mu update
-    steps_basis = steps_sorted @ basis
-    rank_mu_term_u = steps_sorted.T @ (weights_sorted_2d * steps_basis)
-
     # Get the diagonal of the covariance update
     lr_diag_upd = (
         lr_rank_one * path_cov**2
@@ -1506,72 +1508,67 @@ def _adaptive_bug_step(
         + (1.0 - lr_decay) * (nsum(basis**2 * core, axis=1) + psi)
         )
 
-    # Apply the update to the current low-rank covariance factor
+    # Compute the rank-one update for the basis growth
+    rank_one_term_u = path_cov[:, None] * (path_cov @ basis)
+
+    # Compute the rank-mu update for the basis growth
+    steps_basis = steps_sorted @ basis
+    rank_mu_term_u = steps_sorted.T @ (weights_sorted_2d * steps_basis)
+
+    # Apply the update to the current low-rank basis
     k_slice = (
         lr_rank_one * rank_one_term_u
         + lr_rank_mu * rank_mu_term_u
         + (1.0 - lr_decay) * (basis * core)
         )
 
-    # Initialize the augmented low-rank covariance factor
-    k_aug = zeros((dim, max_rank))
-    k_aug[:, :rank] = k_slice
-
-    # Compute the orthogonal basis of k_slice
+    # Compute the orthonormal basis of the updated low-rank components
     q_slice, _ = qr(k_slice)
 
-    # Initialize the augmentation counter
-    n_added = 0
+    # Check if the basis should be augmented
+    if aug_size > 0:
 
-    # Loop over the number of required augmentation vectors
-    for index in range(aug_size):
+        # Initialize the augmentation matrix
+        augmentation = zeros((dim, aug_size))
 
-        # Check if the index is zero
-        if index == 0:
+        # Add the covariance evolution path
+        augmentation[:, 0] = path_cov.copy()
 
-            # Start with the covariance evolution path
-            vector = path_cov.copy()
+        # Get the number of mutation steps
+        n_steps = steps_sorted.shape[0]
 
-        # Check if an intermediate index is used
-        elif index - 1 < steps_sorted.shape[0]:
+        # Loop over the augmentation size
+        for index in range(1, aug_size):
 
-            # Try a successful mutation step
-            vector = steps_sorted[index - 1].copy()
+            # Check if the next mutation step can be selected
+            if index - 1 < n_steps:
 
-        else:
+                # Add the mutation step
+                augmentation[:, index] = steps_sorted[index - 1].copy()
 
-            # Fall back to a random direction
-            vector = randn(dim)
+            else:
 
-        # Perform full reorthogonalization twice
+                # Add a random vector
+                augmentation[:, index] = randn(dim)
+
+        # Perform double reorthogonalization for stabilization
         for _ in range(2):
 
-            # Project onto the orthogonal complement of the current basis
-            vector -= q_slice @ (q_slice.T @ vector)
+            # Orthogonalize against the current basis
+            augmentation -= q_slice @ (q_slice.T @ augmentation)
 
-            # Check if the basis has already been augmented
-            if n_added > 0:
+        # Extract the directions for augmentation
+        q_augm, _ = qr(augmentation)
 
-                # Get the the previous augmentation vectors
-                previous = k_aug[:, rank:rank + n_added]
+        # Merge into the augmented, orthogonal basis
+        uhat_aug = hstack((q_slice, q_augm[:, :aug_size]))
 
-                # Orthogonalize the current vector against the previous
-                vector -= previous @ (previous.T @ vector)
+    else:
 
-        # Get the norm
-        vector_norm = norm(vector)
+        # Use the non-augmented basis directly
+        uhat_aug = q_slice
 
-        # Check if the norm is sufficiently small
-        if vector_norm > 1e-15:
-
-            # Add the normalized vector
-            k_aug[:, rank + n_added] = vector / vector_norm
-
-            # Increase the counter
-            n_added += 1
-
-    # Compute an orthonormal basis of the augmented low-rank directions
-    uhat_aug, _ = qr(k_aug[:, :rank + n_added])
+    # Get the transposed basis
     uhat_aug_tr = uhat_aug.T
 
     # Compute the rank-one update in the augmented space
@@ -1617,8 +1614,30 @@ def _adaptive_bug_step(
 
         else:
 
-            # Get the off-diagonal core matrix
-            shat_off = shat - diag(diag(shat))
+            # Adapt the energy tolerance to the population size (optional)
+            # lambda_current = steps_sorted.shape[0]
+            # adaptive_tolerance = (
+            #     low_rank_energy_tolerance * sqrt(lambda_current / 100.0)
+            #     )
+            # current_energy_tolerance = min(0.25, max(0.01, adaptive_tolerance))
+
+            # Compute the standard deviations from psi
+            psi_curr = (
+                (1.0 - lr_decay) * psi + lr_rank_one * path_cov**2
+                )
+            std_psi = sqrt(maximum(psi_curr, 1e-15))
+
+            # Project the whitening operator into the subspace
+            whiten = uhat_aug.T @ (uhat_aug / std_psi[:, None])
+
+            # Calculate the correlation matrix of shat
+            shat_corr = whiten @ shat @ whiten
+
+            # Enforce the symmetry
+            shat_corr = 0.5 * (shat_corr + shat_corr.T)
+
+            # Get the off-diagonal matrix
+            shat_off = shat_corr - diag(diag(shat_corr))
 
             # Calculate and sort the eigenvalues
             sigma_off, _ = eigh(shat_off)

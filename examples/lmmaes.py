@@ -43,7 +43,7 @@ Available benchmark functions are:
 name = 'Rotated Ellipsoid'
 
 # Enter the problem dimensionality
-ndim = 1000
+ndim = 100
 
 # Get the benchmark function class
 problems = {
@@ -93,7 +93,7 @@ with MonitorLMMAES(
         )
 
     # Optimize the decision variables
-    result = solver.optimize(array([3.0]*problem.ndim))
+    result = solver.optimize(array([10.0]*problem.ndim))
 
     # Initialize the result plotter
     plotter = ResultPlotter(

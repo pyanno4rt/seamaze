@@ -40,7 +40,7 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Sphere'
+name = 'Rotated Ellipsoid'
 
 # Enter the problem dimensionality
 ndim = 100
@@ -93,7 +93,7 @@ with MonitorCMAES(
         )
 
     # Optimize the decision variables
-    result = solver.optimize(array([3.0]*problem.ndim))
+    result = solver.optimize(array([10.0]*problem.ndim))
 
     # Initialize the result plotter
     plotter = ResultPlotter(

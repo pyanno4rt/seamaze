@@ -97,7 +97,7 @@ with MonitorDLRCMAES(
         )
 
     # Optimize the decision variables
-    result = solver.optimize(array([3.0]*problem.ndim))
+    result = solver.optimize(array([10.0]*problem.ndim))
 
     # Initialize the result plotter (optional)
     plotter = ResultPlotter(
@@ -106,7 +106,7 @@ with MonitorDLRCMAES(
     # Select the plots
     plotter.show_objective = True
     plotter.show_fitness = True
-    plotter.show_bound_viol = False
+    plotter.show_bound_viol = True
     plotter.show_step_size = True
     plotter.show_mean_change_norm = True
     plotter.show_sigma_path_norm = True
