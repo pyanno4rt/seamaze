@@ -4,7 +4,7 @@
 
 # %% External package import
 
-from numpy import asarray, cos, full, sign, sin, sqrt, where, zeros
+from numpy import asarray, cos, full, sin, sqrt, where, zeros
 from numpy import abs as nabs
 from numpy import any as nany
 from numpy import sum as nsum
@@ -109,6 +109,6 @@ class Schwefel(BenchmarkFunction):
         sqrt_abs_x = sqrt(nabs(x))
 
         # Calculate the gradient
-        grad = -sin(sqrt_abs_x) - 0.5 * sign(x) * sqrt_abs_x * cos(sqrt_abs_x)
+        grad = -sin(sqrt_abs_x) - 0.5 * sqrt_abs_x * cos(sqrt_abs_x)
 
         return where(x == 0.0, 0.0, grad)
