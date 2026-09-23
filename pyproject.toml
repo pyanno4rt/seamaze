@@ -48,6 +48,10 @@ spyder = ">=6.1.7"
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/pyanno4rt/seamaze/issues"
 
+[tool.pytest.ini_options]
+pythonpath = [ "." ]
+testpaths = [ "tests" ]
+
 [tool.coverage.run]
 omit = []
 
