@@ -3,3 +3,6 @@
 __pycache__
 .DS_Store
 *.odg
+.coverage
+coverage.lcov
+*.png

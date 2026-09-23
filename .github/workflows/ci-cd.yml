@@ -4,7 +4,7 @@ name: ci-cd
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, develop ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
@@ -15,42 +15,52 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
+        python-version: ['3.11', '3.12', '3.13', '3.14']
         os: [ubuntu-latest, windows-latest, macos-latest]
+        experimental: [false]
+        include:
+          # Python 3.15 is a pre-release, so failures are reported without
+          # failing the whole workflow
+          - python-version: '3.15'
+            os: ubuntu-latest
+            experimental: true
 
     runs-on: ${{ matrix.os }}
-    
+    continue-on-error: ${{ matrix.experimental }}
+
+    env:
+      # Use a non-interactive matplotlib backend (no display on CI runners)
+      MPLBACKEND: Agg
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Poetry has to be installed before setup-python to enable its cache
+      - name: Install Poetry
+        run: pipx install poetry==1.8.2
+
       - name: Set up Python ${{ matrix.python-version }}
         id: setup-python
         uses: actions/setup-python@v5
-        continue-on-error: true
         with:
           python-version: ${{ matrix.python-version }}
-          architecture: x64
-          cache: 'pip'
-
-      - name: Install Poetry
-        if: steps.setup-python.outcome == 'success'
-        run: pip install poetry==1.8.2
+          allow-prereleases: true
+          cache: 'poetry'
 
       - name: Install dependencies
-        if: steps.setup-python.outcome == 'success'
-        run: poetry install --without dev-local
+        shell: bash
+        run: |
+          poetry env use "${{ steps.setup-python.outputs.python-path }}"
+          poetry install --without dev-local --no-interaction
 
       - name: Run tests with coverage
-        if: steps.setup-python.outcome == 'success'
-        shell: bash
-        run: poetry run pytest --cov=seamaze --cov-report=lcov || echo "No tests found or pytest failed"
-        
+        run: poetry run pytest --cov=seamaze --cov-report=lcov
+
       - name: Upload coverage to Coveralls
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' && steps.setup-python.outcome == 'success'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path-to-lcov: coverage.lcov
-          allow-empty: true
-
+          fail-on-error: false
