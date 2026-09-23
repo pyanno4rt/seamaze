@@ -2,7 +2,8 @@
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 import pytest
-from numpy import array, full
+from numpy import array, eye, full
+from numpy.random import default_rng
 
 from seamaze.benchmarks import (
     Ackley, BentCigar, Discus, Ellipsoid, Griewank, LinearSlope, Rastrigin,
@@ -41,6 +42,36 @@ def test_objectiveAtOpt(benchmark, ndim):
     x_opt, f_opt = OPTIMA[benchmark]
     problem = benchmark(ndim)
 
-    # Schwefel's constant 418.9829 is rounded, so f(x*) is only ~1e-5 per dim
     assert problem(full(ndim, x_opt)) == pytest.approx(
         f_opt * ndim, abs=1e-4 * ndim)
+
+
+# Check gradient at optimum:
+# grad f(x*) should be zero up to numerical inaccuracies, except for Linear Slope, whose optimum lies on
+# the upper bound, so the gradient there is the constant slope -1
+@pytest.mark.parametrize('ndim', DIMENSIONS)
+@pytest.mark.parametrize('benchmark', OPTIMA, ids=lambda b: b.__name__)
+def test_gradientAtOpt(benchmark, ndim):
+    x_opt, _ = OPTIMA[benchmark]
+    problem = benchmark(ndim)
+    grad_opt = -1.0 if benchmark is LinearSlope else 0.0
+
+    assert problem.gradient(full(ndim, x_opt)) == pytest.approx(
+        full(ndim, grad_opt), abs=1e-6)
+
+
+# Check gradient against central finite differences:
+# evaluated at a few fixed random points 
+@pytest.mark.parametrize('benchmark', OPTIMA, ids=lambda b: b.__name__)
+def test_gradientFiniteDiff(benchmark):
+    ndim, num_points, step = 5, 3, 1e-4
+    problem = benchmark(ndim)
+    lower, upper = problem.bounds
+    rng = default_rng(0)
+
+    for x in rng.uniform(0.9 * lower, 0.9 * upper, size=(num_points, ndim)):
+        finite_diff = array([
+            (problem(x + step * e) - problem(x - step * e)) / (2.0 * step)
+            for e in eye(ndim)])
+        assert problem.gradient(x) == pytest.approx(
+            finite_diff, rel=1e-4, abs=1e-4)

@@ -41,16 +41,14 @@ F_TOL = 1e-2
 X_TOL_FLAT = 1e-1
 
 
-# Check optimum is found in NDIM dimensions
-# -> LM-MA-ES started inside the global basin should converge to x*
+# Check optimum is found 
 @pytest.mark.parametrize('benchmark', OPTIMA, ids=lambda b: b.__name__)
 def test_findOpt(benchmark):
     x_opt, f_opt = OPTIMA[benchmark]
     problem = benchmark(NDIM)
     lower, upper = problem.bounds
 
-    # Start slightly off the optimum (inside the bounds for Linear Slope,
-    # whose optimum lies on the upper bound)
+    # Start slightly off the optimum 
     start = x_opt - 0.05 if x_opt == upper[0] else x_opt + 0.05
 
     solver = LMMAES(
