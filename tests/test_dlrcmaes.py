@@ -2,7 +2,7 @@
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 import pytest
-from numpy import array, full
+from numpy import full
 
 from seamaze.benchmarks import (
     Ackley, BentCigar, Discus, Ellipsoid, Griewank, LinearSlope, Rastrigin,
@@ -11,8 +11,7 @@ from seamaze.benchmarks import (
 from seamaze.optimizers import DLRCMAES
 
 # Global optimum per benchmark: (coordinate of x* in every dimension,
-# f(x*) per dimension). Most benchmarks have x*=zeros(dim) and f(x*)=0,
-# the exceptions are listed explicitly.
+# f(x*) per dimension).
 OPTIMA = {
     Ackley: (0.0, 0.0),
     BentCigar: (0.0, 0.0),
@@ -30,30 +29,41 @@ OPTIMA = {
     SumOfDiffPowers: (0.0, 0.0),
     }
 
-# Check optimum is found in 1D
-# -> CMA-ES started inside the global basin should converge to x*
-# (Rosenbrock is excluded since it is constant in 1d)
-@pytest.mark.parametrize(
-    'benchmark', [b for b in OPTIMA if b is not Rosenbrock],
-    ids=lambda b: b.__name__)
+# Problem dimension 
+NDIM = 5
+
+# Tolerances for the optimal point and value
+X_TOL = 1e-4
+F_TOL = 1e-4
+
+# Sum of Different Powers is very flat around x* (f~|x|^6 in the last
+# dimension), so the optimal point can only be checked loosely
+X_TOL_FLAT = 1e-1
+
+
+# Check optimum is found in NDIM dimensions
+# -> DLR-CMA-ES started inside the global basin should converge to x*
+@pytest.mark.parametrize('benchmark', OPTIMA, ids=lambda b: b.__name__)
 def test_findOpt(benchmark):
     x_opt, f_opt = OPTIMA[benchmark]
-    problem = benchmark(1)
+    problem = benchmark(NDIM)
     lower, upper = problem.bounds
 
     # Start slightly off the optimum (inside the bounds for Linear Slope,
     # whose optimum lies on the upper bound)
-    start = x_opt - 0.25 if x_opt == upper[0] else x_opt + 0.25
+    start = x_opt - 0.05 if x_opt == upper[0] else x_opt + 0.05
 
     solver = DLRCMAES(
-        number_of_variables=1,
+        number_of_variables=NDIM,
         objective=problem.__call__,
         lower_variable_bounds=lower,
         upper_variable_bounds=upper,
         initial_sigma=0.1,
         min_log_level='critical',
         random_state=42)
-    result = solver.optimize(array([start]))
+    result = solver.optimize(full(NDIM, start))
 
-    assert result['optimal_point'][0] == pytest.approx(x_opt, abs=1e-6)
-    assert result['optimal_value'] == pytest.approx(f_opt, abs=1e-4)
+    x_tol = X_TOL_FLAT if benchmark is SumOfDiffPowers else X_TOL
+    assert result['optimal_point'] == pytest.approx(
+        full(NDIM, x_opt), abs=x_tol)
+    assert result['optimal_value'] == pytest.approx(f_opt * NDIM, abs=F_TOL)
