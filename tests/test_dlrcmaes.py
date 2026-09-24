@@ -48,7 +48,7 @@ def test_findOpt(benchmark):
     lower, upper = problem.bounds
 
     # Start slightly off the optimum 
-    start = x_opt - 0.05 if x_opt == upper[0] else x_opt + 0.05
+    start = x_opt - 0.1 if x_opt == upper[0] else x_opt + 0.1
 
     solver = DLRCMAES(
         number_of_variables=NDIM,
@@ -57,7 +57,12 @@ def test_findOpt(benchmark):
         upper_variable_bounds=upper,
         initial_sigma=0.1,
         min_log_level='critical',
-        random_state=42)
+        random_state=42,
+        low_rank_energy_tolerance=1e-2,
+        maximum_iterations=100000,
+        tolerance=1e-6,
+        sigma_threshold=1e-8,
+        maximum_wall_time=40)
     result = solver.optimize(full(NDIM, start))
 
     x_tol = X_TOL_FLAT if benchmark is SumOfDiffPowers else X_TOL
