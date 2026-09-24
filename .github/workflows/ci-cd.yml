@@ -18,12 +18,14 @@ jobs:
         python-version: ['3.11', '3.12', '3.13', '3.14']
         os: [ubuntu-latest, windows-latest, macos-latest]
         experimental: [false]
-        include:
-          # Python 3.15 is a pre-release, so failures are reported without
-          # failing the whole workflow
-          - python-version: '3.15'
-            os: ubuntu-latest
-            experimental: true
+        # Python 3.15 is disabled until numba/llvmlite ship stable wheels for
+        # it (first expected with numba 0.68 / llvmlite 0.50); re-enable after
+        # updating poetry.lock. Failures are reported without failing the
+        # whole workflow.
+        # include:
+        #   - python-version: '3.15'
+        #     os: ubuntu-latest
+        #     experimental: true
 
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
