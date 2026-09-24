@@ -2,18 +2,29 @@
 # Authors: Tim Ortkamp, Chinmay Patwardhan, Pia Stammer
 
 import pytest
-from numpy import array, eye, full
+from numpy import array, eye, full, zeros
 from numpy.random import default_rng
 
 from seamaze.benchmarks import (
-    Ackley, BentCigar, Discus, Ellipsoid, Griewank, LinearSlope, Rastrigin,
+    BenchmarkFunction, Ackley, BentCigar, Discus, Ellipsoid, Griewank, LinearSlope, Rastrigin,
     Rosenbrock, RotatedEllipsoid, RotatedRastrigin, Schwefel, Sphere,
     StyblinskiTang, SumOfDiffPowers)
-from seamaze.optimizers import CMAES
 
+# Check base class 
+# -> only defines the interface, so calling it must raise NotImplementedError
+# until a subclass overrides the method
+@pytest.mark.parametrize('method', ['__call__', 'gradient'])
+def test_baseClassNotImplemented(method):
+    base = BenchmarkFunction(
+        name='Base', ndim=2, bounds=(full(2, -1.0), full(2, 1.0)))
+
+    with pytest.raises(NotImplementedError):
+        getattr(base, method)(zeros(2))
+
+# Check actual benchmark functions
 # Global optimum per benchmark: (coordinate of x* in every dimension,
 # f(x*) per dimension). Most benchmarks have x*=zeros(dim) and f(x*)=0,
-# the exceptions are listed explicitly.
+# the exceptions are listed explicitly
 OPTIMA = {
     Ackley: (0.0, 0.0),
     BentCigar: (0.0, 0.0),
@@ -33,6 +44,13 @@ OPTIMA = {
 
 DIMENSIONS = [1, 2, 5, 10]
 
+# Check zero dimensional problem returns zero
+@pytest.mark.parametrize('benchmark', OPTIMA, ids=lambda b: b.__name__)
+def test_zeroDimReturnsZero(benchmark):
+    problem = benchmark(0)
+
+    assert problem(full(0, zeros(0))) == 0.0
+    assert problem.gradient(zeros(0)).shape == (0,)
 
 # Check obj. function value at optimum:
 # f(x*) should equal the known optimal value for several dimensions
