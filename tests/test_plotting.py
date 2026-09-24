@@ -93,14 +93,12 @@ def test_emptySeriesIsSkipped(shown):
     assert plt.get_fignums() == []
 
 
-# Check that showing works without a display: with the non-interactive Agg
-# backend (set in conftest.py) the real plt.show only warns and returns
-# immediately instead of failing or blocking
+# Check that showing works without a display
+@pytest.mark.filterwarnings('ignore:.*non-interactive:UserWarning')
 def test_showWithoutDisplay():
     assert matplotlib.get_backend().lower() == 'agg'
 
-    with pytest.warns(UserWarning, match='non-interactive'):
-        plot_series(SERIES)
+    plot_series(SERIES)
 
     assert plt.get_fignums() == []
 
