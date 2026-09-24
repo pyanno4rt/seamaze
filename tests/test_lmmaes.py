@@ -59,10 +59,8 @@ def test_findOpt(benchmark):
         initial_sigma=0.1,
         min_log_level='critical',
         random_state=42,
-         maximum_iterations=100000,
-        tolerance=1e-6,
-        sigma_threshold=1e-8,
-        maximum_wall_time=40)
+        tolerance=1e-8,
+        sigma_threshold=1e-8)
     result = solver.optimize(full(NDIM, start))
 
     x_tol = X_TOL_FLAT if benchmark is SumOfDiffPowers else X_TOL
