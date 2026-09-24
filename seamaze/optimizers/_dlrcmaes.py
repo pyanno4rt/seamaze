@@ -219,7 +219,7 @@ class DLRCMAES:
         self._elite_size = int(nsum(base_weights > 0))
 
         # Get the low-rank adaptivity parameters
-        default_rank = int(ceil(number_of_variables/3))
+        default_rank = int(ceil(number_of_variables/4))
 
         self._low_rank_max_dimension = (
             self._number_of_variables
