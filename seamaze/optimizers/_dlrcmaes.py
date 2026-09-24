@@ -17,8 +17,8 @@ from numba import njit, types
 from numba.core.errors import NumbaPerformanceWarning
 from numpy import (
     arange, argmin, argsort, array, ascontiguousarray, asfortranarray, ceil,
-    clip, diag, exp, eye, finfo, float64, full, hstack, isinf, log, maximum,
-    minimum, ptp, ones, outer, sort, sqrt, where, zeros)
+    clip, diag, exp, eye, finfo, float64, full, hstack, isfinite, isinf, log,
+    maximum, minimum, ptp, ones, outer, sort, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import max as nmax
 from numpy import mean as nmean
@@ -219,7 +219,7 @@ class DLRCMAES:
         self._elite_size = int(nsum(base_weights > 0))
 
         # Get the low-rank adaptivity parameters
-        default_rank = 1
+        default_rank = int(ceil(number_of_variables/3))
 
         self._low_rank_max_dimension = (
             self._number_of_variables
@@ -232,12 +232,13 @@ class DLRCMAES:
             if low_rank_init_dimension is None
             else low_rank_init_dimension
             )
+
         self._low_rank_init_dimension = min(
             max(1, self._low_rank_init_dimension),
             self._number_of_variables,
             self._low_rank_max_dimension
             )
-
+        
         self._low_rank_is_adaptive = low_rank_is_adaptive
         self._low_rank_energy_tolerance = low_rank_energy_tolerance
 
@@ -598,14 +599,16 @@ class DLRCMAES:
         # Get the fitness sorting indices
         sorting = argsort(fitness)
 
-        # Update the state variables
+        # Update the state variables (whitening with the non-negative core
+        # used for sampling, since negative core values can make the full
+        # covariance indefinite and let the step size explode)
         (path_sigma_new, mean_new, sigma_new, path_cov_new, update_switch
          ) = _tell(
             self._steps,
             sorting,
             self._weights,
             self._basis,
-            self._core,
+            maximum(self._core, 0.0),
             self._psi,
             self._path_sigma,
             self._path_cov,
@@ -948,6 +951,14 @@ class DLRCMAES:
 
             # Add the solver info
             self._result['solver_info'] = 'SIGMA_BELOW_THRESH'
+
+            return True
+
+        # Check if the step size or the mean has become non-finite
+        if not isfinite(self._sigma) or not isfinite(self._mean).all():
+
+            # Add the solver info
+            self._result['solver_info'] = 'SIGMA_OR_MEAN_NOT_FINITE'
 
             return True
 
