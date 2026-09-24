@@ -11,8 +11,8 @@ from collections import deque
 from math import inf
 from numba import njit, types
 from numpy import (
-    add, arange, argmin, argsort, array, clip, exp, float64, full, isinf,
-    isnan, log, maximum, ptp, sqrt, where, zeros)
+    add, arange, argmin, argsort, array, clip, exp, float64, full, isfinite,
+    isinf, isnan, log, maximum, ptp, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import any as nany
 from numpy import max as nmax
@@ -405,8 +405,12 @@ class LMMAES:
             # Check if the penalty factor has not been initialized
             if self._gamma is None:
 
-                # Compute the unpenalized fitness range
-                fitness_range = nmax(true_fitness) - nmin(true_fitness)
+                # Compute the unpenalized fitness range over finite values
+                finite_fitness = true_fitness[isfinite(true_fitness)]
+                fitness_range = (
+                    nmax(finite_fitness) - nmin(finite_fitness)
+                    if finite_fitness.size > 0 else 0.0
+                    )
 
                 # Scale the penalty factor to the fitness range
                 self._gamma = (
@@ -423,9 +427,11 @@ class LMMAES:
             # Apply unpenalized fitness values for selection
             selection_fitness = true_fitness
 
-        # Get the best unpenalized fitness
-        best_index = argmin(true_fitness)
-        true_best_fitness = true_fitness[best_index]
+        # Get the best unpenalized fitness (NaN values count as the worst
+        # possible value, since argmin would otherwise return a NaN index)
+        tracked_fitness = where(isnan(true_fitness), inf, true_fitness)
+        best_index = argmin(tracked_fitness)
+        true_best_fitness = tracked_fitness[best_index]
 
         # Append the best (unpenalized) fitness to the history
         self._fitness_history.append(true_best_fitness)
@@ -437,8 +443,11 @@ class LMMAES:
             self._result['optimal_value'] = true_best_fitness
             self._result['optimal_point'] = self._population[best_index].copy()
 
-        # Re-evaluate the current best individual for tracking
-        self.objective(self._result['optimal_point'])
+        # Check if an optimal point has been found yet
+        if self._result['optimal_point'] is not None:
+
+            # Re-evaluate the current best individual for tracking
+            self.objective(self._result['optimal_point'])
 
         return true_fitness, selection_fitness
 
@@ -569,8 +578,8 @@ class LMMAES:
         # Get the optimal point
         opt_point = self._result['optimal_point']
 
-        # Check if the length is greater than 5
-        if len(opt_point) > 5:
+        # Check if a point has been found and its length is greater than 5
+        if opt_point is not None and len(opt_point) > 5:
 
             # Truncate the solution string
             short_sol = (
@@ -662,8 +671,9 @@ class LMMAES:
 
             return True
 
-        # Check if the history is completely filled
-        if len(self._fitness_history) == self._fitness_history.maxlen:
+        # Check if the history is completely filled with finite values
+        if (len(self._fitness_history) == self._fitness_history.maxlen
+                and isfinite(self._fitness_history).all()):
 
             # Convert the history to a list
             history = array(self._fitness_history)
