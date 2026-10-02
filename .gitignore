@@ -3,6 +3,9 @@
 __pycache__
 .DS_Store
 *.odg
-.coverage
-coverage.lcov
-*.png
+/tests_*
+/starting_points
+/logs
+plot_dlrcmaes_results.py
+run_all_parallel.sh
+run_single_simulation.py
