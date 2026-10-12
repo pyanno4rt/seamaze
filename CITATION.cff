@@ -13,7 +13,7 @@ authors:
   - given-names: "Pia"
     family-names: "Stammer"
     orcid: "https://orcid.org/0000-0002-5595-0439"
-abstract: "seamaze is a Python library for classical, limited-memory, and dynamical low-rank (DLR) variants of the covariance matrix adaptation evolution strategy (CMA-ES). It provides state-of-the-art, derivative-free algorithms designed for continuous, non-linear, and non-convex real-parameter optimization, excelling in ill-conditioned, non-separable, or rugged fitness landscapes. By leveraging limited-memory and DLR approximations, seamaze maintains computational efficiency even on high-dimensional black-box problems. This implementation further incorporates first-order information, constraint handling, and multi-stage restart mechanisms."
+abstract: "seamaze is a Python library for classical, limited-memory, and dynamical low-rank (DLR) variants of the covariance matrix adaptation evolution strategy (CMA-ES). It provides state-of-the-art, derivative-free algorithms designed for continuous, non-linear, and non-convex real-parameter optimization, excelling in ill-conditioned, non-separable, or rugged fitness landscapes. By leveraging limited-memory and DLR approximations, seamaze maintains computational efficiency even on high-dimensional black-box problems. This implementation further incorporates first-order information and bound constraint handling."
 keywords:
   - python
   - optimization
@@ -22,6 +22,6 @@ keywords:
   - cma-es
   - dynamical-low-rank
 license: MIT
-date-released: 2026-07-24
+date-released: 2026-10-13
 repository-code: "http://github.com/pyanno4rt/seamaze"
 url: "http://github.com/pyanno4rt/seamaze"

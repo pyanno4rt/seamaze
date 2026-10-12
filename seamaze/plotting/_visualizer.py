@@ -177,10 +177,13 @@ class Visualizer:
         # Initialize the history size counter
         self._hist_count = 0
 
-        # Determine the bounds for the landscape plot
+        # Determine whether the landscape bounds are fixed or dynamic
+        self.dynamic_bounds = bounds is None
+
+        # Set default bounds if none are provided
         bounds = bounds if bounds is not None else [(-1, -1), (1, 1)]
 
-        # Get the plot limits
+        # Get the initial plot limits
         x_min, x_max = bounds[0][0], bounds[1][0]
         y_min, y_max = bounds[0][1], bounds[1][1]
 
@@ -923,6 +926,21 @@ class Visualizer:
 
                 # Apply the formatter to the colorbar x-axis
                 self.rec_colorbar.ax.xaxis.set_major_formatter(formatter)
+
+        # Update the axis limits only if dynamic bounds are enabled
+        if self.dynamic_bounds:
+
+            # Get the minimum and maximum population coordinates
+            x_min, x_max = population[:, 0].min(), population[:, 0].max()
+            y_min, y_max = population[:, 1].min(), population[:, 1].max()
+
+            # Calculate a small padding around the population
+            x_padding = 0.05 * max(x_max - x_min, 1e-9)
+            y_padding = 0.05 * max(y_max - y_min, 1e-9)
+
+            # Set the axis limits
+            self.ax_rec.set_xlim(x_min - x_padding, x_max + x_padding)
+            self.ax_rec.set_ylim(y_min - y_padding, y_max + y_padding)
 
         # Slice history safely based on filled buffer size
         history_length = min(self._hist_count, self.max_size)

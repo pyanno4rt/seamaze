@@ -11,13 +11,12 @@ from collections import deque
 from math import inf
 from numba import njit, types
 from numpy import (
-    add, arange, argmin, argsort, array, clip, exp, float64, full, isinf,
+    arange, argmin, argsort, array, clip, exp, float64, full, isfinite, isinf,
     isnan, log, maximum, ptp, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import any as nany
 from numpy import max as nmax
 from numpy import mean as nmean
-from numpy import min as nmin
 from numpy import sum as nsum
 from numpy.linalg import norm
 from numpy.random import default_rng
@@ -298,87 +297,109 @@ class LMMAES:
         # Check if a gradient has been provided
         if self.gradient is not None:
 
-            # Compute the gradient
-            gradient = self.gradient(self._mean)
-
-            # Create a temporary copy
-            natural_gradient = gradient.copy()
-
-            # Transform the natural gradient
-            natural_gradient = _transform_gradient(
-                natural_gradient, self._memory, self._lr_cov, num_iter
-                )
-
-            # Compute the rescaling factor
-            rescale = 1.0 / sqrt(gradient @ natural_gradient + 1e-15)
-
-            # Compute the natural gradient step
-            gradient_step = natural_gradient * rescale
-
-            # Add the mirrored gradient steps
-            self._steps[-2] = -gradient_step
-            self._steps[-1] = gradient_step
+            # Add the gradient steps
+            self._add_gradient_steps(num_iter)
 
         # Sample the new population
-        add(self._mean, self._sigma * self._steps, out=self._population)
+        self._population[:] = self._mean + self._sigma * self._steps
 
         # Check if the decision variables are bounded
         if self._is_bound:
 
-            # Compute the distance to the lower and upper bounds
-            eps_lower = maximum(
-                0.0, self.lower_variable_bounds - self._population
+            # Repair the population
+            self._repair_population()
+
+    def _add_gradient_steps(
+            self,
+            number_of_iterations):
+        """
+        Add the mirrored gradient steps.
+
+        Parameters
+        ----------
+        number_of_iterations : int
+            Current iteration of memory filling.
+        """
+
+        # Compute the gradient
+        gradient = self.gradient(self._mean)
+
+        # Create a temporary copy
+        natural_gradient = gradient.copy()
+
+        # Transform the natural gradient
+        natural_gradient = _transform_gradient(
+            natural_gradient, self._memory, self._lr_cov, number_of_iterations
+            )
+
+        # Compute the rescaling factor
+        rescale = 1.0 / sqrt(gradient @ natural_gradient + 1e-15)
+
+        # Compute the natural gradient step
+        gradient_step = natural_gradient * rescale
+
+        # Add the mirrored gradient steps
+        self._steps[-2] = -gradient_step
+        self._steps[-1] = gradient_step
+
+    def _repair_population(self):
+        """Repair the population and update the penalty term."""
+
+        # Compute the distance to the lower and upper bounds
+        eps_lower = maximum(
+            0.0, self.lower_variable_bounds - self._population
+            )
+        eps_upper = maximum(
+            0.0, self._population - self.upper_variable_bounds
+            )
+
+        # Compute the squared total bound errors
+        bound_errors_squared = (eps_lower + eps_upper) ** 2
+
+        # Average the squared errors for each individual
+        self._mean_squared_bound_errors = nmean(
+            bound_errors_squared, axis=1)
+
+        # Check if the penalty factor has been initialized
+        if self._gamma is not None:
+
+            # Compute the relative severity of bound violations
+            violation_severity = nmean(
+                nsum(bound_errors_squared, axis=1) /
+                (nsum(bound_errors_squared, axis=1) +
+                 nsum((self._sigma * self._steps) ** 2, axis=1) +
+                 1e-15
+                 )
+                ) ** 2
+
+            # Compute the gamma factor
+            gamma_factor = (
+                1.001 ** violation_severity *
+                0.999 ** (1.0 - violation_severity)
                 )
-            eps_upper = maximum(
-                0.0, self._population - self.upper_variable_bounds
-                )
 
-            # Compute the squared total bound errors
-            bound_errors_squared = (eps_lower + eps_upper) ** 2
+            # Adapt the penalty factor
+            self._gamma = clip(self._gamma * gamma_factor, 1e-5, 1e10)
 
-            # Average the squared errors for each individual
-            self._mean_squared_bound_errors = nmean(
-                bound_errors_squared, axis=1)
+        # Get the relative step size
+        sigma_rel = self._sigma / (1 + self._sigma)
 
-            # Check if the penalty factor has been initialized
-            if self._gamma is not None:
+        # Mirror the violating individuals back into the feasible region
+        self._population[:] = where(
+            self._population < self.lower_variable_bounds,
+            self.lower_variable_bounds + sigma_rel * eps_lower,
+            self._population
+            )
+        self._population[:] = where(
+            self._population > self.upper_variable_bounds,
+            self.upper_variable_bounds - sigma_rel * eps_upper,
+            self._population
+            )
 
-                # Compute the relative severity of bound violations
-                violation_severity = nmean(
-                    nsum(bound_errors_squared, axis=1) /
-                    (nsum(bound_errors_squared, axis=1) +
-                     nsum((self._sigma * self._steps) ** 2, axis=1) +
-                     1e-15
-                     )
-                    ) ** 2
-
-                # Compute the gamma factor
-                gamma_factor = (
-                    1.001 ** violation_severity *
-                    0.999 ** (1.0 - violation_severity)
-                    )
-
-                # Adapt the penalty factor
-                self._gamma = clip(self._gamma * gamma_factor, 1e-5, 1e10)
-
-            # Get the relative step size
-            sigma_rel = self._sigma / (1 + self._sigma)
-
-            # Mirror the violating individuals back into the feasible region
-            self._population[:] = where(
-                self._population < self.lower_variable_bounds,
-                self.lower_variable_bounds + sigma_rel * eps_lower,
-                self._population
-                )
-            self._population[:] = where(
-                self._population > self.upper_variable_bounds,
-                self.upper_variable_bounds - sigma_rel * eps_upper,
-                self._population
-                )
-
-            # Enforce hard constraints to avoid numerical round-off errors
-            clip(self._population, a_min=self.lower_variable_bounds,
-                 a_max=self.upper_variable_bounds, out=self._population)
+        # Enforce hard constraints to avoid numerical round-off errors
+        self._population[:] = clip(
+            self._population, a_min=self.lower_variable_bounds,
+            a_max=self.upper_variable_bounds)
 
     def evaluate(self):
         """
@@ -405,8 +426,11 @@ class LMMAES:
             # Check if the penalty factor has not been initialized
             if self._gamma is None:
 
-                # Compute the unpenalized fitness range
-                fitness_range = nmax(true_fitness) - nmin(true_fitness)
+                # Compute the unpenalized fitness range over finite values
+                finite_fitness = true_fitness[isfinite(true_fitness)]
+                fitness_range = (
+                    ptp(finite_fitness) if finite_fitness.size > 0 else 0.0
+                    )
 
                 # Scale the penalty factor to the fitness range
                 self._gamma = (
@@ -423,9 +447,11 @@ class LMMAES:
             # Apply unpenalized fitness values for selection
             selection_fitness = true_fitness
 
-        # Get the best unpenalized fitness
-        best_index = argmin(true_fitness)
-        true_best_fitness = true_fitness[best_index]
+        # Get the best unpenalized fitness (NaN values count as the worst
+        # possible value, since argmin would otherwise return a NaN index)
+        tracked_fitness = where(isnan(true_fitness), inf, true_fitness)
+        best_index = argmin(tracked_fitness)
+        true_best_fitness = tracked_fitness[best_index]
 
         # Append the best (unpenalized) fitness to the history
         self._fitness_history.append(true_best_fitness)
@@ -437,8 +463,11 @@ class LMMAES:
             self._result['optimal_value'] = true_best_fitness
             self._result['optimal_point'] = self._population[best_index].copy()
 
-        # Re-evaluate the current best individual for tracking
-        self.objective(self._result['optimal_point'])
+        # Check if an optimal point has been found yet
+        if self._result['optimal_point'] is not None:
+
+            # Re-evaluate the current best individual for tracking
+            self.objective(self._result['optimal_point'])
 
         return true_fitness, selection_fitness
 
@@ -569,8 +598,8 @@ class LMMAES:
         # Get the optimal point
         opt_point = self._result['optimal_point']
 
-        # Check if the length is greater than 5
-        if len(opt_point) > 5:
+        # Check if a point has been found and its length is greater than 5
+        if opt_point is not None and len(opt_point) > 5:
 
             # Truncate the solution string
             short_sol = (
@@ -662,8 +691,9 @@ class LMMAES:
 
             return True
 
-        # Check if the history is completely filled
-        if len(self._fitness_history) == self._fitness_history.maxlen:
+        # Check if the history is completely filled with finite values
+        if (len(self._fitness_history) == self._fitness_history.maxlen
+                and isfinite(self._fitness_history).all()):
 
             # Convert the history to a list
             history = array(self._fitness_history)

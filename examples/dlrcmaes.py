@@ -40,7 +40,7 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Rotated Ellipsoid'
+name = 'Sphere'
 
 # Enter the problem dimensionality
 ndim = 100
@@ -67,9 +67,7 @@ problems = {
 problem = problems[name](ndim)
 
 # Initialize the monitor as a context manager
-with MonitorDLRCMAES(
-    interval=1, mode='silent', plot_bounds=((-5, -5), (5, 5)),
-    delay=0.001) as monitor:
+with MonitorDLRCMAES(interval=1, mode='silent', delay=0.001) as monitor:
 
     # Initialize the DLR-CMA-ES solver
     solver = DLRCMAES(
@@ -84,13 +82,13 @@ with MonitorDLRCMAES(
         low_rank_max_dimension=None,
         low_rank_is_adaptive=True,
         low_rank_energy_tolerance=1e-2,
-        maximum_iterations=10000000,
+        maximum_iterations=1000000,
         maximum_wall_time=43200,
         fitness_threshold=None,
         fitness_window_size=50,
         tolerance=1e-6,
         sigma_threshold=1e-8,
-        update_interval=1,
+        update_interval=None,
         min_log_level='debug',
         callback=monitor.base,  # Enable basic monitoring
         random_state=42
@@ -118,4 +116,4 @@ with MonitorDLRCMAES(
     plotter.show_lr_contributions = True
 
     # Plot all selected results
-    # plotter.plot_all()
+    plotter.plot_all()

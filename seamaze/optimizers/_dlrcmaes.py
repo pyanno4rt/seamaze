@@ -17,15 +17,15 @@ from numba import njit, types
 from numba.core.errors import NumbaPerformanceWarning
 from numpy import (
     arange, argmin, argsort, array, ascontiguousarray, asfortranarray, ceil,
-    clip, diag, exp, eye, finfo, float64, full, hstack, isinf, log, maximum,
-    minimum, ptp, ones, outer, sort, sqrt, where, zeros)
+    clip, diag, exp, finfo, float64, full, hstack, isfinite, isinf, isnan, log,
+    maximum, minimum, ptp, ones, outer, sign, sort, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import max as nmax
 from numpy import mean as nmean
 from numpy import min as nmin
 from numpy import sum as nsum
 from numpy.linalg import eigh, norm, qr, solve
-from numpy.random import default_rng, randn
+from numpy.random import default_rng, randn, standard_normal
 
 # %% Internal package import
 
@@ -330,13 +330,11 @@ class DLRCMAES:
         self._path_cov = zeros(self._number_of_variables, dtype=float64)
         self._mean = zeros(self._number_of_variables, dtype=float64)
 
-        self._basis = eye(
-            self._number_of_variables, self.rank, dtype=float64
+        self._basis, _ = qr(
+            standard_normal((self._number_of_variables, self.rank))
             )
-        self._core = ones(self.rank, dtype=float64)
-
+        self._core = zeros(self.rank, dtype=float64)
         self._psi = ones(self._number_of_variables, dtype=float64)
-        self._psi[:self.rank] *= 0.0
 
         # Initialize the stopping criteria and tracking variables
         self.maximum_iterations = maximum_iterations
@@ -351,7 +349,6 @@ class DLRCMAES:
             self._get_update_interval() if update_interval is None
             else update_interval
             )
-        self._current_expansion_reasons = []
         self._callback = callback
         self._result = {
             'optimal_point': None, 'optimal_value': inf, 'solver_info': None,
@@ -546,8 +543,11 @@ class DLRCMAES:
             # Check if the penalty factor has not been initialized
             if self._gamma is None:
 
-                # Compute the unpenalized fitness range
-                fitness_range = ptp(true_fitness)
+                # Compute the unpenalized fitness range over finite values
+                finite_fitness = true_fitness[isfinite(true_fitness)]
+                fitness_range = (
+                    ptp(finite_fitness) if finite_fitness.size > 0 else 0.0
+                    )
 
                 # Scale the penalty factor to the fitness range
                 self._gamma = (
@@ -564,9 +564,11 @@ class DLRCMAES:
             # Apply unpenalized fitness values for selection
             selection_fitness = true_fitness
 
-        # Get the best unpenalized fitness
-        best_index = argmin(true_fitness)
-        true_best_fitness = true_fitness[best_index]
+        # Get the best unpenalized fitness (NaN values count as the worst
+        # possible value, since argmin would otherwise return a NaN index)
+        tracked_fitness = where(isnan(true_fitness), inf, true_fitness)
+        best_index = argmin(tracked_fitness)
+        true_best_fitness = tracked_fitness[best_index]
 
         # Append the best (unpenalized) fitness to the history
         self._fitness_history.append(true_best_fitness)
@@ -578,8 +580,11 @@ class DLRCMAES:
             self._result['optimal_value'] = true_best_fitness
             self._result['optimal_point'] = self._population[best_index].copy()
 
-        # Re-evaluate the current best individual for tracking
-        self.objective(self._result['optimal_point'])
+        # Check if an optimal point has been found yet
+        if self._result['optimal_point'] is not None:
+
+            # Re-evaluate the current best individual for tracking
+            self.objective(self._result['optimal_point'])
 
         return true_fitness, selection_fitness
 
@@ -648,10 +653,7 @@ class DLRCMAES:
                 self._low_rank_max_dimension,
                 self._low_rank_is_adaptive,
                 self._low_rank_energy_tolerance,
-                update_switch=update_switch,
-                force_expansion=self.check_rank_expansion(
-                    self._steps[sorting][:self._elite_size, :]
-                    )
+                update_switch=update_switch
                 )
 
             # Save the covariance state variables
@@ -760,8 +762,14 @@ class DLRCMAES:
         # Get the optimal point
         opt_point = self._result['optimal_point']
 
+        # Check if no optimal point has been found
+        if opt_point is None:
+
+            # Use a placeholder for the solution string
+            short_sol = 'None'
+
         # Check if the length is greater than 5
-        if len(opt_point) > 5:
+        elif len(opt_point) > 5:
 
             # Format the first elements and append suspension points
             short_sol = (
@@ -784,135 +792,6 @@ class DLRCMAES:
             )
 
         return self._result
-
-    def check_rank_expansion(
-            self,
-            elite_steps):
-        """
-        Check the evolutionary-state rank expansion criteria.
-
-        Parameters
-        ----------
-        elite_steps : ndarray
-            Elite mutation steps.
-
-        Returns
-        -------
-        bool
-            Indicator for rank expansion.
-        """
-
-        # Check if the current rank equals the number of variables
-        if self.rank == self._number_of_variables:
-
-            return False
-
-        # Initialize the expansion reasons
-        reasons = []
-
-        # Get the expected path energy fraction from a random subspace
-        expected_explained_ratio = max(
-            self.rank / self._number_of_variables, 1e-6
-            )
-
-        # Project the evolution path into the current low-rank subspace
-        path_cov_coords = self._basis.T @ self._path_cov
-
-        # Calculate the explained and total path energy
-        path_explained_energy = norm(path_cov_coords)**2
-        path_total_energy = norm(self._path_cov)**2
-
-        # Calculate the explained path energy fraction
-        path_explained_ratio = (
-            path_explained_energy / (path_total_energy + 1e-15)
-            )
-
-        # Get the ratio of explained versus expected energy
-        path_ratio = path_explained_ratio / (expected_explained_ratio + 1e-15)
-
-        # Convert the relative path explanation into expansion pressure
-        path_pressure = max(0.0, 1.0 - path_ratio)
-
-        # Check if the path pressure is above zero
-        if path_pressure > 0.0:
-
-            # Add the expansion reason
-            reasons.append('path_underrepresentation')
-
-        # Project the elite steps into the current low-rank subspace
-        elite_coords = elite_steps @ self._basis
-
-        # Calculate the explained and total weighted elite step energies
-        elite_explained_energy = nsum(
-            self._weights[:self._elite_size]
-            * nsum(elite_coords * elite_coords, axis=1)
-            )
-        elite_total_energy = nsum(
-            self._weights[:self._elite_size]
-            * nsum(elite_steps * elite_steps, axis=1)
-            )
-
-        # Calculate the explained elite step energy fraction
-        elite_explained_ratio = (
-            elite_explained_energy / (elite_total_energy + 1e-15)
-            )
-
-        # Get the ratio of explained versus expected energy
-        elite_ratio = (
-            elite_explained_ratio / (expected_explained_ratio + 1e-15)
-            )
-
-        # Convert the relative elite-step explanation into expansion pressure
-        elite_pressure = max(0.0, 1.0 - elite_ratio)
-
-        # Check if the elite pressure is above zero
-        if elite_pressure > 0.0:
-
-            # Add the expansion reason
-            reasons.append('steps_underrepresentation')
-
-        # Initialize the fitness pressure
-        fitness_pressure = 0.0
-
-        # Check if the fitness history has been completely filled
-        if len(self._fitness_history) == self._fitness_history.maxlen:
-
-            # Get the fitness history
-            history = array(self._fitness_history)
-
-            # Split the history
-            half = history.size // 2
-
-            # Compute the average fitness
-            fit_old = nmean(history[:half])
-            fit_new = nmean(history[half:])
-
-            # Get the fitness range
-            fit_range = ptp(history)
-
-            # Compute the normalized fitness improvement
-            fitness_improvement = (
-                (fit_old - fit_new) / (fit_range + 1e-15)
-                )
-
-            # Convert the fitness improvement into stagnation pressure
-            fitness_pressure = clip(1.0 - fitness_improvement / 1e-2, 0.0, 1.0)
-
-            # Check if the fitness pressure is above zero
-            if fitness_pressure > 0.0:
-
-                # Add the expansion reason
-                reasons.append('fitness_stagnation')
-
-        # Update the current expansion reasons
-        self._current_expansion_reasons = reasons
-
-        return (
-            0.45 * path_pressure
-            + 0.45 * elite_pressure
-            + 0.1 * fitness_pressure
-            >= 0.2
-            )
 
     def check_termination(self):
         """
@@ -983,8 +862,9 @@ class DLRCMAES:
 
             return True
 
-        # Check if the history is completely filled
-        if len(self._fitness_history) == self._fitness_history.maxlen:
+        # Check if the fitness history is completely filled with finite values
+        if (len(self._fitness_history) == self._fitness_history.maxlen
+                and isfinite(self._fitness_history).all()):
 
             # Convert the history to a list
             history = array(self._fitness_history)
@@ -1009,6 +889,14 @@ class DLRCMAES:
                     'RELATIVE_FITNESS_PLATEAU_REACHED')
 
                 return True
+
+        # Check if the step size or the mean has become non-finite
+        if not isfinite(self._sigma) or not isfinite(self._mean).all():
+
+            # Add the solver info
+            self._result['solver_info'] = 'SIGMA_OR_MEAN_INFINITE'
+
+            return True
 
         return False
 
@@ -1252,7 +1140,7 @@ def _lanczos_inverse_sqrt_product(elite_mean_step, basis, core, psi):
     lambda_max = tridiagonal_evals[-1]
 
     # Apply a relative eigenvalue floor for numerical stability
-    threshold = max(1e-15, finfo(float64).eps * lambda_max * lambda_max)
+    threshold = max(1e-15, finfo(float64).eps * lambda_max)
 
     # Safeguard the projected spectrum against non-positive Ritz values
     tridiagonal_evals = maximum(tridiagonal_evals, threshold)
@@ -1360,8 +1248,7 @@ def _tell(
 
 
 @njit(
-    i8(
-        # Return: rank
+    i8(                 # Return: rank
         f8_1d,          # eigenvalues
         f8,             # energy_fraction
         i8,             # min_rank
@@ -1369,7 +1256,7 @@ def _tell(
     fastmath=True
     )
 def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
-    """Determine the optimal rank from the total energy criterium."""
+    """Select the smallest rank explaining a spectral energy fraction."""
 
     # Initialize the total energy
     total_energy = 0.0
@@ -1377,8 +1264,11 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
     # Loop over the eigenvalues
     for index in range(eigenvalues.size):
 
+        # Clip the eigenvalue
+        value = max(eigenvalues[index], 0.0)
+
         # Cumulate the total energy
-        total_energy += eigenvalues[index]**2
+        total_energy += value
 
     # Check if the total energy is sufficiently small
     if total_energy <= 1e-15:
@@ -1392,8 +1282,11 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
     # Loop over the eigenvalues
     for index in range(eigenvalues.size):
 
+        # Clip the eigenvalue
+        value = max(eigenvalues[index], 0.0)
+
         # Cumulate the energy
-        cumulative += eigenvalues[index]**2
+        cumulative += value
 
         # Check if the cumulated energy exceeds the requested fraction
         if cumulative >= energy_fraction * total_energy:
@@ -1420,15 +1313,14 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
         i8,             # low_rank_max_dimension
         bo,             # low_rank_is_adaptive
         f8,             # low_rank_energy_tolerance
-        f8,             # update_switch
-        bo              # force_expansion
+        f8              # update_switch
         ),
     fastmath=True
     )
 def _adaptive_bug_step(
     basis, core, psi, steps, sorting, weights, path_cov, lr_cov, lr_rank_one,
     lr_rank_mu, low_rank_max_dimension, low_rank_is_adaptive,
-    low_rank_energy_tolerance, update_switch, force_expansion):
+    low_rank_energy_tolerance, update_switch):
     """Perform an update step of the adaptive BUG integrator."""
 
     # Ensure array layouts
@@ -1532,7 +1424,7 @@ def _adaptive_bug_step(
         augmentation = zeros((dim, aug_size))
 
         # Add the covariance evolution path
-        augmentation[:, 0] = path_cov.copy()
+        augmentation[:, 0] = path_cov - q_slice @ (q_slice.T @ path_cov)
 
         # Get the number of mutation steps
         n_steps = steps_sorted.shape[0]
@@ -1543,25 +1435,28 @@ def _adaptive_bug_step(
             # Check if the next mutation step can be selected
             if index - 1 < n_steps:
 
-                # Add the mutation step
-                augmentation[:, index] = steps_sorted[index - 1].copy()
+                # Get the mutation step
+                candidate = steps_sorted[index - 1]
 
             else:
 
-                # Add a random vector
-                augmentation[:, index] = randn(dim)
+                # Get a random vector
+                candidate = randn(dim)
 
-        # Perform double reorthogonalization for stabilization
+            # Add the orthogonal vector
+            augmentation[:, index] = (
+                candidate - q_slice @ (q_slice.T @ candidate)
+                )
+
+        # Reorthogonalize against the current basis for stabilization
         for _ in range(2):
-
-            # Orthogonalize against the current basis
             augmentation -= q_slice @ (q_slice.T @ augmentation)
 
         # Extract the directions for augmentation
         q_augm, _ = qr(augmentation)
 
         # Merge into the augmented, orthogonal basis
-        uhat_aug = hstack((q_slice, q_augm[:, :aug_size]))
+        uhat_aug = hstack((q_slice, q_augm))
 
     else:
 
@@ -1572,7 +1467,7 @@ def _adaptive_bug_step(
     uhat_aug_tr = uhat_aug.T
 
     # Compute the rank-one update in the augmented space
-    path_aug = uhat_aug.T @ path_cov
+    path_aug = uhat_aug_tr @ path_cov
     rank_one_term_s = outer(path_aug, path_aug)
 
     # Compute the rank-mu update in the augmented space
@@ -1580,8 +1475,8 @@ def _adaptive_bug_step(
     rank_mu_term_s = steps_aug.T @ (weights_sorted_2d * steps_aug)
 
     # Project the old covariance structure onto the augmented space
-    proj = uhat_aug_tr @ basis
-    ext_s = (proj * core) @ proj.T
+    basis_proj = uhat_aug_tr @ basis
+    ext_s = (basis_proj * core) @ basis_proj.T
 
     # Apply the update to the augmented core matrix
     shat = (
@@ -1600,87 +1495,104 @@ def _adaptive_bug_step(
     sigma = sigma[::-1]
     basis_sigma = basis_sigma[:, ::-1]
 
+    # Safeguard against negative eigenvalues from machine imprecision
+    sigma = maximum(sigma, 0.0)
+
     # Check if the rank should be adapted
     if low_rank_is_adaptive:
 
-        # Initialize the rank delta
-        rank_delta = 0
+        # Project the diagonal covariance into the augmented subspace
+        diag_aug = (uhat_aug.T * lr_diag_upd) @ uhat_aug
 
-        # Check if the rank should be expanded due to evolutionary signals
-        if force_expansion:
+        # Enforce symmetry
+        diag_aug = 0.5 * (diag_aug + diag_aug.T)
+
+        # Compute the inverse square root of the projected diagonal covariance
+        eigvals_diag, eigvecs_diag = eigh(diag_aug)
+        eigvals_diag = maximum(eigvals_diag, 1e-15)
+
+        inv_sqrt_diag = (
+            eigvecs_diag * (1.0 / sqrt(eigvals_diag))[None, :]
+            ) @ eigvecs_diag.T
+
+        # Whiten the augmented covariance relative to the diagonal background
+        shat_white = inv_sqrt_diag @ shat @ inv_sqrt_diag
+
+        # Enforce symmetry
+        shat_white = 0.5 * (shat_white + shat_white.T)
+
+        # Remove the diagonal contribution
+        shat_off = shat_white - diag(diag(shat_white))
+
+        # Enforce symmetry
+        shat_off = 0.5 * (shat_off + shat_off.T)
+
+        # Compute the spectrum of the off-diagonal structure
+        sigma_off, _ = eigh(shat_off)
+
+        # Apply a soft noise filter
+        threshold = 0.02
+        sigma_off = sign(sigma_off) * maximum(nabs(sigma_off) - threshold, 0.0)
+
+        # Sort by absolute eigenvalue magnitude
+        sigma_off = sort(nabs(sigma_off))[::-1]
+
+        # Select the rank from the relative spectral energy
+        rank_energy = _energy_rank_selection(
+            eigenvalues=sigma_off,
+            energy_fraction=1.0-low_rank_energy_tolerance,
+            min_rank=1
+            )
+
+        # Check if the proposed rank is smaller
+        if rank_energy < rank:
+
+            # Set the rank increment to minus one
+            rank_delta = -1
+
+        # Check if the proposed rank is larger
+        elif rank_energy > rank:
 
             # Set the rank increment to one
             rank_delta = 1
 
         else:
 
-            # Adapt the energy tolerance to the population size (optional)
-            # lambda_current = steps_sorted.shape[0]
-            # adaptive_tolerance = (
-            #     low_rank_energy_tolerance * sqrt(lambda_current / 100.0)
-            #     )
-            # current_energy_tolerance = min(0.25, max(0.01, adaptive_tolerance))
-
-            # Compute the standard deviations from psi
-            psi_curr = (
-                (1.0 - lr_decay) * psi + lr_rank_one * path_cov**2
-                )
-            std_psi = sqrt(maximum(psi_curr, 1e-15))
-
-            # Project the whitening operator into the subspace
-            whiten = uhat_aug.T @ (uhat_aug / std_psi[:, None])
-
-            # Calculate the correlation matrix of shat
-            shat_corr = whiten @ shat @ whiten
-
-            # Enforce the symmetry
-            shat_corr = 0.5 * (shat_corr + shat_corr.T)
-
-            # Get the off-diagonal matrix
-            shat_off = shat_corr - diag(diag(shat_corr))
-
-            # Calculate and sort the eigenvalues
-            sigma_off, _ = eigh(shat_off)
-            sigma_off = sort(nabs(sigma_off))[::-1]
-
-            # Determine the rank from the spectral energy
-            rank_energy = _energy_rank_selection(
-                sigma_off, energy_fraction=1-low_rank_energy_tolerance,
-                min_rank=1
-                )
-
-            # Check if the proposed rank is smaller
-            if rank_energy < rank:
-
-                # Set the rank increment to minus one
-                rank_delta = -1
-
-            # Check if the proposed rank is larger
-            elif rank_energy > rank:
-
-                # Set the rank increment to one
-                rank_delta = 1
+            # Set the rank increment to zero
+            rank_delta = 0
 
         # Change the rank within the allowed range
         rank_new = rank + rank_delta
-        rank_new = max(1, min(rank_new, low_rank_max_dimension))
+        rank_new = max(1, min(rank_new, low_rank_max_dimension, dim))
 
     else:
 
         # Keep the current rank fixed
-        rank_new = min(rank, low_rank_max_dimension)
+        rank_new = max(1, min(rank, low_rank_max_dimension, dim))
 
     # Truncate the low-rank factors to the new rank
     basis_new = uhat_aug @ basis_sigma[:, :rank_new]
     core_new = sigma[:rank_new]
 
-    # Get the diagonal of the updated low-rank component
+    # Get the current diagonal update
     lr_diag_new = nsum(basis_new**2 * core_new, axis=1)
 
-    # Update psi by the residual diagonal
-    psi_new = lr_diag_upd - lr_diag_new
+    # Initialize the correction factor
+    alpha = 1.0
 
-    # Keep the residual diagonal strictly positive
-    psi_new = maximum(psi_new, 1e-15)
+    # Get the positive diagonal entries
+    positive = lr_diag_new > 0.0
+
+    # Check if any positives are present
+    if positive.any():
+
+        # Determine the global correction level
+        alpha = min(1.0, nmin(lr_diag_upd[positive] / lr_diag_new[positive]))
+
+    # Rescale the core
+    core_new *= alpha
+
+    # Shift the residual variance to psi
+    psi_new = maximum(lr_diag_upd - alpha * lr_diag_new, 0.0)
 
     return basis_new, core_new, psi_new, rank_new

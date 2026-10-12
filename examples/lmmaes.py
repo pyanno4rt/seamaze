@@ -40,7 +40,7 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Rotated Ellipsoid'
+name = 'Sphere'
 
 # Enter the problem dimensionality
 ndim = 100
@@ -67,9 +67,7 @@ problems = {
 problem = problems[name](ndim)
 
 # Initialize the monitor as a context manager
-with MonitorLMMAES(
-    interval=1, mode='silent', plot_bounds=((-5, -5), (5, 5)),
-    delay=0.001) as monitor:
+with MonitorLMMAES(interval=1, mode='silent', delay=0.001) as monitor:
 
     # Initialize the LM-MA-ES solver
     solver = LMMAES(
@@ -81,7 +79,7 @@ with MonitorLMMAES(
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
         memory_size=None,
-        maximum_iterations=1000000,
+        maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,
         fitness_window_size=50,
@@ -93,7 +91,7 @@ with MonitorLMMAES(
         )
 
     # Optimize the decision variables
-    result = solver.optimize(array([10.0]*problem.ndim))
+    result = solver.optimize(array([100.0]*problem.ndim))
 
     # Initialize the result plotter
     plotter = ResultPlotter(
@@ -102,7 +100,7 @@ with MonitorLMMAES(
     # Select the plots
     plotter.show_objective = True
     plotter.show_fitness = True
-    plotter.show_bound_viol = False
+    plotter.show_bound_viol = True
     plotter.show_step_size = True
     plotter.show_mean_change_norm = True
     plotter.show_sigma_path_norm = True
@@ -112,4 +110,4 @@ with MonitorLMMAES(
     plotter.show_cov_spectr_norm = True
 
     # Plot all selected results
-    # plotter.plot_all()
+    plotter.plot_all()

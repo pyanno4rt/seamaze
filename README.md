@@ -25,7 +25,7 @@
 
 # General :earth_americas:
 
-*seamaze* is a Python library for classical, limited-memory, and dynamical low-rank (DLR) variants of the covariance matrix adaptation evolution strategy (CMA-ES). It provides state-of-the-art, derivative-free algorithms designed for continuous, non-linear, and non-convex real-parameter optimization, excelling in ill-conditioned, non-separable, or rugged fitness landscapes. By leveraging limited-memory and DLR approximations, *seamaze* maintains computational efficiency even on high-dimensional black-box problems. This implementation further incorporates first-order information, constraint handling, and multi-stage restart mechanisms.
+*seamaze* is a Python library for classical, limited-memory, and dynamical low-rank (DLR) variants of the covariance matrix adaptation evolution strategy (CMA-ES). It provides state-of-the-art, derivative-free algorithms designed for continuous, non-linear, and non-convex real-parameter optimization, excelling in ill-conditioned, non-separable, or rugged fitness landscapes. By leveraging limited-memory and DLR approximations, *seamaze* maintains computational efficiency even on high-dimensional black-box problems. This implementation further incorporates first-order information and bound constraint handling.
 
 # Installation :computer:
 
@@ -74,8 +74,8 @@ from seamaze.optimizers import DLRCMAES
 | `python`                       | <font size="3"> >=3.11, <4.0 </font>  |
 | `numpy`                        | <font size="3"> >=2.4.6 </font>       |
 | `scipy`                        | <font size="3"> >=1.17.1 </font>      |
-| `numba`                        | <font size="3"> >=0.67.0 </font>      |
-| `matplotlib`                   | <font size="3"> >=3.11.1 </font>      |
+| `numba`                        | <font size="3"> >=0.68.0 </font>      |
+| `matplotlib`                   | <font size="3"> >=3.11.2 </font>      |
 | `seaborn`                      | <font size="3"> >=0.13.2 </font>      |
 
 # Development :rocket:

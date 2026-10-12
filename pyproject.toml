@@ -33,12 +33,12 @@ include = "seamaze"
 python = ">=3.11, <4.0"
 numpy = ">=2.4.6"
 scipy = ">=1.17.1"
-numba = ">=0.67.0"
-matplotlib = ">=3.11.1"
+numba = ">=0.68.0"
+matplotlib = ">=3.11.2"
 seaborn = ">=0.13.2"
 
 [tool.poetry.group.dev.dependencies]
-pytest = ">=9.1.0"
+pytest = ">=9.1.1"
 pytest-cov = ">=7.1.0"
 coveralls = ">=4.1.0"
 

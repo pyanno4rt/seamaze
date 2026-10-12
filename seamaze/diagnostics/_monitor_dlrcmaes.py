@@ -267,11 +267,6 @@ class MonitorDLRCMAES:
                 sqrt(max(correlation_off_norm_sq, 0.0) / (dim * (dim - 1)))
                 )
 
-            # Record the current expansion reasons
-            self._record(
-                'expansion_reasons', solver._current_expansion_reasons
-                )
-
     def full(
             self,
             solver):

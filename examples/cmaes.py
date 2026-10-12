@@ -40,7 +40,7 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Rotated Ellipsoid'
+name = 'Sphere'
 
 # Enter the problem dimensionality
 ndim = 100
@@ -67,9 +67,7 @@ problems = {
 problem = problems[name](ndim)
 
 # Initialize the monitor as a context manager
-with MonitorCMAES(
-    interval=1, mode='silent', plot_bounds=((-5, -5), (5, 5)),
-    delay=0.001) as monitor:
+with MonitorCMAES(interval=1, mode='silent', delay=0.001) as monitor:
 
     # Initialize the CMA-ES solver
     solver = CMAES(
@@ -80,20 +78,20 @@ with MonitorCMAES(
         # upper_variable_bounds=array(problem.bounds[1]),
         number_of_individuals=None,
         initial_sigma=3.0,  # ~20-30 % of the search range
-        maximum_iterations=10000000,
+        maximum_iterations=100000,
         maximum_wall_time=43200,
         fitness_threshold=None,
         fitness_window_size=50,
         tolerance=1e-6,
         sigma_threshold=1e-8,
-        update_interval=1,
+        update_interval=None,
         min_log_level='debug',
         callback=monitor.base,  # Enable basic monitoring
         random_state=42
         )
 
     # Optimize the decision variables
-    result = solver.optimize(array([10.0]*problem.ndim))
+    result = solver.optimize(array([100.0]*problem.ndim))
 
     # Initialize the result plotter
     plotter = ResultPlotter(
@@ -102,7 +100,7 @@ with MonitorCMAES(
     # Select the plots
     plotter.show_objective = True
     plotter.show_fitness = True
-    plotter.show_bound_viol = False
+    plotter.show_bound_viol = True
     plotter.show_step_size = True
     plotter.show_mean_change_norm = True
     plotter.show_sigma_path_norm = True
@@ -112,4 +110,4 @@ with MonitorCMAES(
     plotter.show_cov_spectr_norm = True
 
     # Plot all selected results
-    # plotter.plot_all()
+    plotter.plot_all()
