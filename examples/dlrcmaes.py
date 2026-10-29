@@ -40,12 +40,12 @@ Available benchmark functions are:
 """
 
 # Enter the function name
-name = 'Sphere'
+name = 'Rotated Ellipsoid'
 
 # Enter the problem dimensionality
 ndim = 100
 
-# Get the benchmark function class
+# Get the benchmark function
 problems = {
     'Ackley': Ackley,
     'Bent-Cigar': BentCigar,
@@ -116,4 +116,4 @@ with MonitorDLRCMAES(interval=1, mode='silent', delay=0.001) as monitor:
     plotter.show_lr_contributions = True
 
     # Plot all selected results
-    plotter.plot_all()
+    # plotter.plot_all()

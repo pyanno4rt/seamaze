@@ -91,7 +91,7 @@ with MonitorLMMAES(interval=1, mode='silent', delay=0.001) as monitor:
         )
 
     # Optimize the decision variables
-    result = solver.optimize(array([100.0]*problem.ndim))
+    result = solver.optimize(array([10.0]*problem.ndim))
 
     # Initialize the result plotter
     plotter = ResultPlotter(

@@ -915,7 +915,9 @@ def _update_covariance(
 
     # Update the covariance matrix
     cov_new = (basis * core) @ basis.T
-    cov_new *= (1.0 - lr_rank_one - lr_rank_mu + lr_rank_one_adj)
+    cov_new *= (
+        1.0 - lr_rank_one - lr_rank_mu * nsum(weights_sorted) + lr_rank_one_adj
+        )
     cov_new += lr_rank_one * outer(path_cov, path_cov)
     cov_new += lr_rank_mu * rank_mu_term
 
