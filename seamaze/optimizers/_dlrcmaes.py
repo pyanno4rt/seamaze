@@ -1390,8 +1390,8 @@ def _adaptive_bug_step(
         (1.0 - update_switch) * lr_rank_one * lr_cov * (2.0 - lr_cov)
         )
 
-    # Get the decay rate
-    lr_decay = lr_rank_one + lr_rank_mu - lr_rank_one_adj
+    # Get the decay rate 
+    lr_decay = lr_rank_one + lr_rank_mu * nsum(weights) - lr_rank_one_adj
 
     # Get the diagonal of the covariance update
     lr_diag_upd = (
