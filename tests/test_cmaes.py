@@ -785,7 +785,7 @@ def test_updateCovariance_rescalesNegativeWeights():
                       array([0, 1], dtype=int64), weights, zeros(NDIM))[0]
     effective = -0.5 * NDIM / 100.0**2
     lr_one, lr_mu = solver._lr_rank_one, solver._lr_rank_mu
-    expected = (1.0 - lr_one - lr_mu) * eye(NDIM) + lr_mu * (
+    expected = (1.0 - lr_one - lr_mu * weights.sum()) * eye(NDIM) + lr_mu * (
         outer(steps[0], steps[0]) + effective * outer(steps[1], steps[1]))
 
     assert_allclose(cov, expected, atol=1e-12)
