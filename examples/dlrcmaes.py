@@ -82,6 +82,8 @@ with MonitorDLRCMAES(interval=1, mode='silent', delay=0.001) as monitor:
         low_rank_max_dimension=None,
         low_rank_is_adaptive=True,
         low_rank_energy_tolerance=1e-2,
+        low_rank_bootstrap_size=32,
+        low_rank_bootstrap_quantile=0.95,
         maximum_iterations=1000000,
         maximum_wall_time=43200,
         fitness_threshold=None,

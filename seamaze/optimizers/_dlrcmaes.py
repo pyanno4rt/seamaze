@@ -18,14 +18,14 @@ from numba.core.errors import NumbaPerformanceWarning
 from numpy import (
     arange, argmin, argsort, array, ascontiguousarray, asfortranarray, ceil,
     clip, diag, exp, finfo, float64, full, hstack, isfinite, isinf, isnan, log,
-    maximum, minimum, ptp, ones, outer, sign, sort, sqrt, where, zeros)
+    maximum, minimum, ptp, ones, outer, sort, sqrt, where, zeros)
 from numpy import abs as nabs
 from numpy import max as nmax
 from numpy import mean as nmean
 from numpy import min as nmin
 from numpy import sum as nsum
 from numpy.linalg import eigh, norm, qr, solve
-from numpy.random import default_rng, randn, standard_normal
+from numpy.random import default_rng, rand, randn, standard_normal
 
 # %% Internal package import
 
@@ -97,6 +97,14 @@ class DLRCMAES:
     low_rank_energy_tolerance : float, default=1e-2
         Maximum fraction of discarded low-rank energy for rank truncation.
 
+    low_rank_bootstrap_size : int, default=32
+        Number of Rademacher bootstrap samples used to estimate the spectral
+        noise threshold.
+
+    low_rank_bootstrap_quantile : float, default=0.95
+        Quantile of the bootstrap noise spectrum used to determine the spectral
+        noise threshold.
+
     maximum_iterations : int, default=100000
         Maximum number of generations (iterations) to run before stopping.
 
@@ -154,6 +162,8 @@ class DLRCMAES:
             low_rank_max_dimension=None,
             low_rank_is_adaptive=True,
             low_rank_energy_tolerance=1e-2,
+            low_rank_bootstrap_size=32,
+            low_rank_bootstrap_quantile=0.95,
             maximum_iterations=100000,
             maximum_wall_time=43200,
             fitness_threshold=-inf,
@@ -240,9 +250,14 @@ class DLRCMAES:
 
         self._low_rank_is_adaptive = low_rank_is_adaptive
         self._low_rank_energy_tolerance = low_rank_energy_tolerance
+        self._low_rank_bootstrap_size = low_rank_bootstrap_size
+        self._low_rank_bootstrap_quantile = low_rank_bootstrap_quantile
 
         # Determine the integrator rank
         self.rank = self._low_rank_init_dimension
+
+        # Initialize the rank persistence streak
+        self._streak = 0
 
         # Determine the sums of positive and negative base weights
         bw_pos_sum = nsum(base_weights[:self._elite_size])
@@ -639,7 +654,8 @@ class DLRCMAES:
             rank_current = self.rank
 
             # Update the covariance factors
-            basis_new, core_new, psi_new, rank_new = _adaptive_bug_step(
+            (basis_new, core_new, psi_new, rank_new, streak
+             ) = _adaptive_bug_step(
                 self._basis,
                 self._core,
                 self._psi,
@@ -653,6 +669,9 @@ class DLRCMAES:
                 self._low_rank_max_dimension,
                 self._low_rank_is_adaptive,
                 self._low_rank_energy_tolerance,
+                self._low_rank_bootstrap_size,
+                self._low_rank_bootstrap_quantile,
+                self._streak,
                 update_switch=update_switch
                 )
 
@@ -661,6 +680,7 @@ class DLRCMAES:
             self._core = core_new
             self._psi[:] = psi_new
             self.rank = rank_new
+            self._streak = streak
 
             # Check if the rank has changed
             if rank_new != rank_current:
@@ -1268,7 +1288,7 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
         value = max(eigenvalues[index], 0.0)
 
         # Cumulate the total energy
-        total_energy += value
+        total_energy += value * value
 
     # Check if the total energy is sufficiently small
     if total_energy <= 1e-15:
@@ -1286,7 +1306,7 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
         value = max(eigenvalues[index], 0.0)
 
         # Cumulate the energy
-        cumulative += value
+        cumulative += value * value
 
         # Check if the cumulated energy exceeds the requested fraction
         if cumulative >= energy_fraction * total_energy:
@@ -1298,8 +1318,8 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
 
 
 @njit(
-    types.Tuple((f8_2d, f8_1d, f8_1d, i8))(
-        # Return: Tuple(basis_new, core_new, psi_new, rank_new)
+    types.Tuple((f8_2d, f8_1d, f8_1d, i8, i8))(
+        # Return: Tuple(basis_new, core_new, psi_new, rank_new, streak)
         f8_2d,          # basis
         f8_1d,          # core
         f8_1d,          # psi
@@ -1313,6 +1333,9 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
         i8,             # low_rank_max_dimension
         bo,             # low_rank_is_adaptive
         f8,             # low_rank_energy_tolerance
+        i8,             # low_rank_bootstrap_size
+        f8,             # low_rank_bootstrap_quantile
+        i8,             # streak
         f8              # update_switch
         ),
     fastmath=True
@@ -1320,7 +1343,8 @@ def _energy_rank_selection(eigenvalues, energy_fraction, min_rank):
 def _adaptive_bug_step(
     basis, core, psi, steps, sorting, weights, path_cov, lr_cov, lr_rank_one,
     lr_rank_mu, low_rank_max_dimension, low_rank_is_adaptive,
-    low_rank_energy_tolerance, update_switch):
+    low_rank_energy_tolerance, low_rank_bootstrap_size,
+    low_rank_bootstrap_quantile, streak, update_switch):
     """Perform an update step of the adaptive BUG integrator."""
 
     # Ensure array layouts
@@ -1390,8 +1414,10 @@ def _adaptive_bug_step(
         (1.0 - update_switch) * lr_rank_one * lr_cov * (2.0 - lr_cov)
         )
 
-    # Get the decay rate 
-    lr_decay = lr_rank_one + lr_rank_mu * nsum(weights) - lr_rank_one_adj
+    # Get the decay rate
+    lr_decay = (
+        lr_rank_one + lr_rank_mu * nsum(weights_sorted) - lr_rank_one_adj
+        )
 
     # Get the diagonal of the covariance update
     lr_diag_upd = (
@@ -1515,55 +1541,132 @@ def _adaptive_bug_step(
             eigvecs_diag * (1.0 / sqrt(eigvals_diag))[None, :]
             ) @ eigvecs_diag.T
 
-        # Whiten the augmented covariance relative to the diagonal background
+        # Whiten the augmented covariance
         shat_white = inv_sqrt_diag @ shat @ inv_sqrt_diag
 
         # Enforce symmetry
         shat_white = 0.5 * (shat_white + shat_white.T)
 
-        # Remove the diagonal contribution
+        # Extract the off-diagonal covariance structure
         shat_off = shat_white - diag(diag(shat_white))
 
         # Enforce symmetry
         shat_off = 0.5 * (shat_off + shat_off.T)
 
-        # Compute the spectrum of the off-diagonal structure
+        # Compute the off-diagonal spectrum
         sigma_off, _ = eigh(shat_off)
 
-        # Apply a soft noise filter
-        threshold = 0.02
-        sigma_off = sign(sigma_off) * maximum(nabs(sigma_off) - threshold, 0.0)
-
-        # Sort by absolute eigenvalue magnitude
+        # Sort eigenvalues by absolute magnitude
         sigma_off = sort(nabs(sigma_off))[::-1]
+
+        # Initialize the noise spectrum
+        noise_spectrum = zeros(low_rank_bootstrap_size)
+
+        # Loop over the bootstrap sampling size
+        for index in range(low_rank_bootstrap_size):
+
+            # Generate Rademacher multipliers
+            signs = 2.0 * (rand(len(weights_sorted)) > 0.5) - 1.0
+
+            # Compute the bootstrap covariance update
+            noise_matrix = lr_rank_mu * (
+                steps_aug.T @ ((weights_sorted * signs)[:, None] * steps_aug)
+                )
+
+            # Remove the diagonal contribution
+            noise_matrix -= diag(diag(noise_matrix))
+
+            # Enforce symmetry
+            noise_matrix = 0.5 * (noise_matrix + noise_matrix.T)
+
+            # Get the maximum absolute eigenvalue
+            noise_eigenvalues, _ = eigh(noise_matrix)
+            noise_spectrum[index] = nmax(nabs(noise_eigenvalues))
+
+        # Estimate the empirical noise threshold by the corresponding quantile
+        noise_threshold = sort(noise_spectrum)[
+            int(low_rank_bootstrap_quantile * (low_rank_bootstrap_size - 1))
+            ]
+
+        # Apply a soft filter to the off-diagonal spectrum
+        signal_spectrum = maximum(sigma_off - noise_threshold, 0.0)
 
         # Select the rank from the relative spectral energy
         rank_energy = _energy_rank_selection(
-            eigenvalues=sigma_off,
+            eigenvalues=signal_spectrum,
             energy_fraction=1.0-low_rank_energy_tolerance,
             min_rank=1
             )
 
+        # Restrict the proposed rank to the available dimensions
+        rank_energy = min(rank_energy, low_rank_max_dimension, dim)
+
         # Check if the proposed rank is smaller
         if rank_energy < rank:
 
-            # Set the rank increment to minus one
-            rank_delta = -1
+            # Set the rank pressure to minus one
+            rank_pressure = -1
 
         # Check if the proposed rank is larger
         elif rank_energy > rank:
 
-            # Set the rank increment to one
-            rank_delta = 1
+            # Set the rank pressure to one
+            rank_pressure = 1
 
         else:
 
-            # Set the rank increment to zero
-            rank_delta = 0
+            # Set the rank pressure to zero
+            rank_pressure = 0
 
-        # Change the rank within the allowed range
-        rank_new = rank + rank_delta
-        rank_new = max(1, min(rank_new, low_rank_max_dimension, dim))
+        # Specify the hysteresis parameters
+        required_persistence_up = 5
+        required_persistence_down = 2
+
+        # Check if the rank pressure is positive
+        if rank_pressure > 0:
+
+            # Increment the streak positively
+            streak = max(1, streak + 1)
+
+        # Else, check if the rank pressure is negative
+        elif rank_pressure < 0:
+
+            # Increment the streak negatively
+            streak = min(-1, streak - 1)
+
+        else:
+
+            # Check if the streak is positive
+            if streak > 0:
+
+                # Increase the streak toward zero
+                streak -= 1
+
+            # Else, check if the streak is negative
+            elif streak < 0:
+
+                # Decrease the streak toward zero
+                streak += 1
+
+        # Initialize the actual rank step
+        rank_delta = 0
+
+        # Check if the streak has accumulated upward persistence
+        if streak >= required_persistence_up:
+
+            # Set the rank step to 1 and reset the streak
+            rank_delta = 1
+            streak = 0
+
+        # Else, check if the streak has accumulated downward persistence
+        elif streak <= -required_persistence_down:
+
+            # Set the rank step to -1 and reset the streak
+            rank_delta = -1
+            streak = 0
+
+        # Update the rank
+        rank_new = max(1, min(rank + rank_delta, low_rank_max_dimension, dim))
 
     else:
 
@@ -1587,7 +1690,9 @@ def _adaptive_bug_step(
     if positive.any():
 
         # Determine the global correction level
-        alpha = min(1.0, nmin(lr_diag_upd[positive] / lr_diag_new[positive]))
+        alpha = min(
+            1.0, nmin(lr_diag_upd[positive] / (lr_diag_new[positive] + 1e-15))
+            )
 
     # Rescale the core
     core_new *= alpha
@@ -1595,4 +1700,4 @@ def _adaptive_bug_step(
     # Shift the residual variance to psi
     psi_new = maximum(lr_diag_upd - alpha * lr_diag_new, 0.0)
 
-    return basis_new, core_new, psi_new, rank_new
+    return basis_new, core_new, psi_new, rank_new, streak

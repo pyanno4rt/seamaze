@@ -74,7 +74,7 @@ from seamaze.optimizers import DLRCMAES
 | `python`                       | <font size="3"> >=3.11, <4.0 </font>  |
 | `numpy`                        | <font size="3"> >=2.4.6 </font>       |
 | `scipy`                        | <font size="3"> >=1.17.1 </font>      |
-| `numba`                        | <font size="3"> >=0.68.0 </font>      |
+| `numba`                        | <font size="3"> >=0.68.1 </font>      |
 | `matplotlib`                   | <font size="3"> >=3.11.2 </font>      |
 | `seaborn`                      | <font size="3"> >=0.13.2 </font>      |
 
