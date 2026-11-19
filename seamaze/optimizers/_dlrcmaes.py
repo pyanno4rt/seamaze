@@ -1562,6 +1562,9 @@ def _adaptive_bug_step(
         # Initialize the noise spectrum
         noise_spectrum = zeros(low_rank_bootstrap_size)
 
+        # Whiten the mutation steps
+        steps_white = steps_aug @ inv_sqrt_diag
+
         # Loop over the bootstrap sampling size
         for index in range(low_rank_bootstrap_size):
 
@@ -1570,7 +1573,8 @@ def _adaptive_bug_step(
 
             # Compute the bootstrap covariance update
             noise_matrix = lr_rank_mu * (
-                steps_aug.T @ ((weights_sorted * signs)[:, None] * steps_aug)
+                steps_white.T
+                @ ((weights_sorted * signs)[:, None] * steps_white)
                 )
 
             # Remove the diagonal contribution

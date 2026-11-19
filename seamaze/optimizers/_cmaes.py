@@ -807,6 +807,7 @@ def _tell(
     # Transform the elite mean step
     latent_step = basis.T @ elite_mean_step
     elite_mean_step_tr = inv_root_core * latent_step
+    elite_mean_step_tr = basis @ elite_mean_step_tr
 
     # Update the step size evolution path
     path_sigma *= (1.0 - lr_sigma)
