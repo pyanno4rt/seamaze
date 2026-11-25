@@ -336,7 +336,9 @@ class LMMAES:
         rescale = 1.0 / sqrt(gradient @ natural_gradient + 1e-15)
 
         # Compute the natural gradient step
-        gradient_step = natural_gradient * rescale
+        gradient_step = (
+            sqrt(self._number_of_variables) * natural_gradient * rescale
+            )
 
         # Add the mirrored gradient steps
         self._steps[-2] = -gradient_step

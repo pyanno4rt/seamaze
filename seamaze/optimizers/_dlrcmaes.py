@@ -468,7 +468,9 @@ class DLRCMAES:
         rescale = 1.0 / (sqrt(gradient @ natural_gradient) + 1e-15)
 
         # Compute the natural gradient step
-        gradient_step = natural_gradient * rescale
+        gradient_step = (
+            sqrt(self._number_of_variables) * natural_gradient * rescale
+            )
 
         # Add the mirrored gradient steps
         self._steps[-2] = -gradient_step
@@ -1379,14 +1381,25 @@ def _adaptive_bug_step(
         # Build the small Woodbury matrix
         woodbury = diag(1.0 / maximum(core, 1e-15)) + basis.T @ inv_psi_basis
 
+        # Enforce symmetry
+        woodbury = 0.5 * (woodbury + woodbury.T)
+
+        # Scale the Woodbury matrix
+        woodbury_scale = maximum(nmax(nabs(woodbury)), 1e-15)
+        woodbury /= woodbury_scale
+
+        # Add a small relative regularization
+        for i in range(rank):
+            woodbury[i, i] += 1e-12
+
         # Apply the inverse scaling to the negative steps
         inv_psi_steps = inv_psi[:, None] * steps_neg.T
 
         # Project the scaled steps onto the basis
         rhs = basis.T @ inv_psi_steps
 
-        # Solve the small Woodbury system
-        correction = solve(woodbury, rhs)
+        # Solve the regularized system
+        correction = solve(woodbury, rhs / woodbury_scale)
 
         # Measure the step size in the inverse covariance metric
         quadratic_forms = (
