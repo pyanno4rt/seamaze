@@ -276,14 +276,15 @@ def test_ask_decaysPenaltyFactor(gamma, expected):
 
 
 # With a gradient, the last two steps are the mirrored natural gradient
-# direction, normalized in the metric of C (here C = I)
+# direction, normalized in the metric of C (here C = I) and scaled by sqrt(n)
+# to match the expected length of the random steps
 def test_ask_gradientSteps():
     problem = Sphere(NDIM)
     solver = make_solver(gradient=problem.gradient)
     solver._mean[:] = arange(1.0, NDIM + 1)
     solver.ask()
     direction = problem.gradient(solver._mean)
-    direction /= norm(direction)
+    direction *= sqrt(NDIM) / norm(direction)
 
     assert_allclose(solver._steps[-1], direction)
     assert_allclose(solver._steps[-2], -direction)
